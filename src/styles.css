@@ -79,13 +79,13 @@ button { color: inherit; }
   font-size: 22px; font-weight: 700;
 }
 .cell-modified-time {
-  position: absolute; top: 4px; right: 8px;
-  color: #88979a; font-size: 11px; font-weight: 400;
+  position: absolute; top: 0; right: 10px; bottom: 0;
+  display: flex; align-items: center;
+  color: #88979a; font-size: 14px; font-weight: 400;
   pointer-events: none; user-select: none; z-index: 3;
 }
 .cell-modified-time.stale { color: #e6c84f; }
 .cell-heading input:focus { box-shadow: inset 0 -1px #188f89; }
-.cell-grip { margin-left: auto; color: #b7c1c2; opacity: .5; font-size: 14px; }
 .cell-editor {
   flex: 1; min-height: 0; padding: 12px 14px 16px; overflow: hidden; outline: none;
   line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; touch-action: manipulation;
@@ -199,7 +199,6 @@ button { color: inherit; }
   .cell-index { color: #82949a; }
   .cell-heading input { color: #cbd8da; }
   .cell-heading input::placeholder { color: #76878d; }
-  .cell-grip { color: #78898e; }
   .cell-editor { color: #e6edef; }
   .cell-editor:empty::before { color: #74848a; }
   .cell-editor:focus { box-shadow: inset 0 0 0 2px rgba(69, 183, 176, .26); }
@@ -422,6 +421,39 @@ button { color: inherit; }
 .floating-select .floating-caption,
 .floating-select .floating-value { pointer-events: none; }
 .floating-select .select-hit-area option { font-size: 16px; }
+.font-size-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 38px;
+  padding: 3px 9px;
+  background: #29373d;
+  border: 1px solid #46575e;
+}
+.font-size-controls .floating-caption { margin-right: 2px; }
+.font-size-btn {
+  display: grid;
+  place-items: center;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 6px;
+  color: #e5eeee;
+  background: #35444b;
+  border: 1px solid #53646c;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.font-size-btn:hover:not(:disabled) { background: #42565f; border-color: #75b9b5; }
+.font-size-btn:disabled { opacity: .35; cursor: not-allowed; }
+.font-step-value {
+  min-width: 32px;
+  text-align: center;
+  color: #b8c9cd;
+  font-size: 11px;
+  white-space: nowrap;
+}
 .controlbar { position: relative; min-height: 56px; padding: 5px 12px; }
 .controlbar .about-button {
   min-width: 64px;

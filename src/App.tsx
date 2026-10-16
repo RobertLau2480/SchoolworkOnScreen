@@ -16,8 +16,10 @@ const defaultSettings: AppSettings = {
 };
 const highlightColor = '#b85c1e';
 const legacyHighlightColors = ['#087f80', '#58d9e6'];
-const FONT_SIZES = { small: 20, medium: 24, large: 28 } as const;
-const MIN_FONT_SIZE = 12;
+const FONT_SIZES = { small: 26, medium: 30, large: 34 } as const;
+const FONT_STEP_SIZE = 2;
+const MAX_FONT_STEP = 5;
+const MIN_FONT_SIZE = 14;
 
 function formatRelativeTime(timestamp: number | null | undefined, now: number): string {
   if (!timestamp) return '';
@@ -37,7 +39,7 @@ function isTimeStale(timestamp: number | null | undefined, now: number): boolean
   return now - timestamp > 12 * 60 * 60 * 1000;
 }
 
-type SelectedFormat = Pick<AppSettings, 'font' | 'fontSize' | 'textColor' | 'bold' | 'highlight'> & { highlighted: boolean };
+type SelectedFormat = Pick<AppSettings, 'font' | 'fontSize' | 'textColor' | 'bold' | 'highlight'> & { highlighted: boolean; fontStep: number };
 
 function fitEditor(editor: HTMLElement, baseSize: number): void {
   const overflows = () => editor.scrollHeight > editor.clientHeight + 1 || editor.scrollWidth > editor.clientWidth + 1;
@@ -107,7 +109,7 @@ function App() {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [selectedFormat, setSelectedFormat] = useState<SelectedFormat>({
     font: defaultSettings.font, fontSize: defaultSettings.fontSize, textColor: defaultSettings.textColor,
-    bold: false, highlight: defaultSettings.highlight, highlighted: false,
+    bold: false, highlight: defaultSettings.highlight, highlighted: false, fontStep: 0,
   });
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ left: 0, top: 0, side: 'below' as 'above' | 'below' });
@@ -143,6 +145,7 @@ function App() {
         bold: parsedSettings.bold,
         highlight: parsedSettings.highlight,
         highlighted: false,
+        fontStep: 0,
       });
       setLoaded(true);
     }).catch(() => setLoaded(true));
@@ -190,8 +193,13 @@ function App() {
     };
   }, []);
 
+  // 计算当前基准字号（含 step 调整）
+  const getBaseFontSize = (level: AppSettings['fontSize'] = settings.fontSize, step: number = selectedFormat.fontStep) => {
+    return FONT_SIZES[level] + step * FONT_STEP_SIZE;
+  };
+
   useEffect(() => {
-    const baseSize = FONT_SIZES[settings.fontSize];
+    const baseSize = getBaseFontSize();
     const fitAll = () => gridRef.current?.querySelectorAll<HTMLElement>('.cell-editor').forEach((editor) => fitEditor(editor, baseSize));
     const observer = new ResizeObserver((entries) => {
       entries.forEach(({ target }) => {
@@ -207,7 +215,7 @@ function App() {
       observer?.disconnect();
       window.removeEventListener('resize', fitAll);
     };
-  }, [document.layout, settings.fontSize]);
+  }, [document.layout, settings.fontSize, selectedFormat.fontStep]);
 
   const updateCell = (index: number, patch: Partial<HomeworkCell>) => {
     setDocument((current) => ({
@@ -297,7 +305,12 @@ function App() {
         break;
       }
     }
-    const size = pixelSize < FONT_SIZES.small ? 'small' : pixelSize >= FONT_SIZES.large ? 'large' : 'medium';
+    // 计算字体 step：基准 + step，换算回 step
+    const level = settings.fontSize;
+    const stepBase = FONT_SIZES[level];
+    const calcStep = Math.round((pixelSize - stepBase) / FONT_STEP_SIZE);
+    const fontStep = Math.max(-MAX_FONT_STEP, Math.min(MAX_FONT_STEP, calcStep));
+    const size = pixelSize < stepBase - FONT_STEP_SIZE ? 'small' : pixelSize >= stepBase + FONT_STEP_SIZE ? 'large' : level;
     const next: SelectedFormat = {
       font: fonts.find((font) => computed.fontFamily.includes(font)) ?? computed.fontFamily.split(',')[0].replace(/"/g, '').trim(),
       fontSize: size,
@@ -305,6 +318,7 @@ function App() {
       bold: window.document.queryCommandState('bold'),
       highlight,
       highlighted,
+      fontStep,
     };
     setSelectedFormat((current) => Object.keys(next).every((key) => current[key as keyof SelectedFormat] === next[key as keyof SelectedFormat]) ? current : next);
   };
@@ -364,7 +378,7 @@ function App() {
     const collapsed = range.collapsed;
     const span = window.document.createElement('span');
     if (property === 'fontSize') {
-      const baseSize = FONT_SIZES[settings.fontSize];
+      const baseSize = getBaseFontSize();
       span.style.fontSize = `${Number.parseFloat(value) / baseSize}em`;
     } else {
       span.style[property] = value;
@@ -389,11 +403,20 @@ function App() {
     readSelectionFormat();
   };
 
+  const changeFontStep = (delta: number) => {
+    const newStep = Math.max(-MAX_FONT_STEP, Math.min(MAX_FONT_STEP, selectedFormat.fontStep + delta));
+    if (newStep === selectedFormat.fontStep) return;
+    setSelectedFormat((current) => ({ ...current, fontStep: newStep }));
+    const baseSize = getBaseFontSize(settings.fontSize, newStep);
+    applyInlineFormat('fontSize', `${baseSize}px`);
+  };
+
   const applyBold = () => {
     applyInlineFormat('fontWeight', selectedFormat.bold ? '400' : '700');
   };
 
   const toggleHighlight = () => {
+    // 优化高光：如果已高亮则取消高光（恢复为编辑器背景色），否则应用高光
     applyInlineFormat('backgroundColor', selectedFormat.highlighted ? 'var(--cell-bg)' : highlightColor);
   };
 
@@ -416,7 +439,7 @@ function App() {
   };
 
   const { rows, columns } = layouts[document.layout];
-  const cellFontSize = FONT_SIZES[settings.fontSize];
+  const cellFontSize = getBaseFontSize();
   const gridStyle = {
     gridTemplateColumns: document.columns.map((value) => `${value}fr`).join(' '),
     gridTemplateRows: document.rows.map((value) => `${value}fr`).join(' '),
@@ -455,7 +478,6 @@ function App() {
                     updateCell(index, { subject: event.target.value });
                     markCellModified(index);
                   }} placeholder="科目" />
-                  <span className="cell-grip" aria-hidden="true">⠿</span>
                 </div>
                 <div
                   className="cell-editor"
@@ -470,7 +492,7 @@ function App() {
                     queueContentUpdate(index, editor);
                     const pending = fitFramesRef.current.get(editor);
                     if (pending) window.cancelAnimationFrame(pending);
-                    const baseSize = FONT_SIZES[settings.fontSize];
+                    const baseSize = getBaseFontSize();
                     fitFramesRef.current.set(editor, window.requestAnimationFrame(() => fitEditor(editor, baseSize)));
                     readSelectionFormat();
                   }}
@@ -527,18 +549,12 @@ function App() {
               {fonts.map((font) => <option key={font} value={font}>{font.replace('Microsoft ', '')}</option>)}
             </select>
           </label>
-          <label className="floating-select size-select" title="字号">
+          <div className="font-size-controls" title="字号调整">
             <span className="floating-caption">字号</span>
-            <span className="floating-value">{{ small: '小', medium: '中', large: '大' }[selectedFormat.fontSize]}</span>
-            <select className="select-hit-area" aria-label="选中文字字号" value={selectedFormat.fontSize} onChange={(event) => {
-              const size = event.target.value as AppSettings['fontSize'];
-              const pixels = FONT_SIZES[size];
-              setSelectedFormat((current) => ({ ...current, fontSize: size }));
-              applyInlineFormat('fontSize', `${pixels}px`);
-            }}>
-              <option value="small">小</option><option value="medium">中</option><option value="large">大</option>
-            </select>
-          </label>
+            <button className="font-size-btn" aria-label="减小字号" title="减小字号" onMouseDown={(event) => event.preventDefault()} onClick={() => changeFontStep(-1)} disabled={selectedFormat.fontStep <= -MAX_FONT_STEP}>A−</button>
+            <span className="font-step-value">{selectedFormat.fontStep === 0 ? '标准' : selectedFormat.fontStep > 0 ? `+${selectedFormat.fontStep}` : `${selectedFormat.fontStep}`}</span>
+            <button className="font-size-btn" aria-label="增大字号" title="增大字号" onMouseDown={(event) => event.preventDefault()} onClick={() => changeFontStep(1)} disabled={selectedFormat.fontStep >= MAX_FONT_STEP}>A+</button>
+          </div>
         </div>
         <div className="selection-toolbar-row style-controls-row">
           <button className={`floating-format ${selectedFormat.bold ? 'selected' : ''}`} aria-label="粗体" title="粗体" onMouseDown={(event) => event.preventDefault()} onClick={applyBold}><b>B</b></button>
