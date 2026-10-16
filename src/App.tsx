@@ -193,9 +193,9 @@ function App() {
     };
   }, []);
 
-  // 计算当前基准字号（含 step 调整）
-  const getBaseFontSize = (level: AppSettings['fontSize'] = settings.fontSize, step: number = selectedFormat.fontStep) => {
-    return FONT_SIZES[level] + step * FONT_STEP_SIZE;
+  // 单元格基准字号：仅由全局字号设置决定，不受选中文字的字号调整影响
+  const getBaseFontSize = (level: AppSettings['fontSize'] = settings.fontSize) => {
+    return FONT_SIZES[level];
   };
 
   useEffect(() => {
@@ -215,7 +215,7 @@ function App() {
       observer?.disconnect();
       window.removeEventListener('resize', fitAll);
     };
-  }, [document.layout, settings.fontSize, selectedFormat.fontStep]);
+  }, [document.layout, settings.fontSize]);
 
   const updateCell = (index: number, patch: Partial<HomeworkCell>) => {
     setDocument((current) => ({
@@ -305,12 +305,14 @@ function App() {
         break;
       }
     }
-    // 计算字体 step：基准 + step，换算回 step
+    // 根据选中文字相对编辑器基准字号的倍率换算 step（选中普通文字时为 0）
     const level = settings.fontSize;
     const stepBase = FONT_SIZES[level];
-    const calcStep = Math.round((pixelSize - stepBase) / FONT_STEP_SIZE);
+    const editorSize = Number.parseFloat(window.getComputedStyle(editor).fontSize);
+    const ratio = editorSize > 0 ? pixelSize / editorSize : 1;
+    const calcStep = Math.round((ratio - 1) * (stepBase / FONT_STEP_SIZE));
     const fontStep = Math.max(-MAX_FONT_STEP, Math.min(MAX_FONT_STEP, calcStep));
-    const size = pixelSize < stepBase - FONT_STEP_SIZE ? 'small' : pixelSize >= stepBase + FONT_STEP_SIZE ? 'large' : level;
+    const size = calcStep < 0 ? 'small' : calcStep > 0 ? 'large' : level;
     const next: SelectedFormat = {
       font: fonts.find((font) => computed.fontFamily.includes(font)) ?? computed.fontFamily.split(',')[0].replace(/"/g, '').trim(),
       fontSize: size,
@@ -407,8 +409,8 @@ function App() {
     const newStep = Math.max(-MAX_FONT_STEP, Math.min(MAX_FONT_STEP, selectedFormat.fontStep + delta));
     if (newStep === selectedFormat.fontStep) return;
     setSelectedFormat((current) => ({ ...current, fontStep: newStep }));
-    const baseSize = getBaseFontSize(settings.fontSize, newStep);
-    applyInlineFormat('fontSize', `${baseSize}px`);
+    const targetSize = getBaseFontSize(settings.fontSize) + newStep * FONT_STEP_SIZE;
+    applyInlineFormat('fontSize', `${targetSize}px`);
   };
 
   const applyBold = () => {

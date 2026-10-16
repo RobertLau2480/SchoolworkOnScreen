@@ -79,7 +79,7 @@ button { color: inherit; }
   font-size: 22px; font-weight: 700;
 }
 .cell-modified-time {
-  position: absolute; top: 0; right: 10px; bottom: 0;
+  position: absolute; top: 5px; right: 10px;
   display: flex; align-items: center;
   color: #88979a; font-size: 14px; font-weight: 400;
   pointer-events: none; user-select: none; z-index: 3;
