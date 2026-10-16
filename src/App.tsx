@@ -1,6 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import appIcon from '../icon.png';
+import { fontOptions, loadLocalFonts } from './fonts';
 import type { AppSettings, HomeworkCell, HomeworkDocument, Layout, Theme } from './types';
+
+/** 由 font-family 取列表展示名（去掉前缀）。 */
+function fontLabel(family: string): string {
+  const option = fontOptions.find((item) => item.family === family);
+  return option ? option.label : family;
+}
+
+const FONT_FALLBACK = '"Microsoft YaHei", "SimHei", sans-serif';
+const fontStack = (family: string) => `"${family}", ${FONT_FALLBACK}`;
 
 const layouts: Record<Layout, { rows: number; columns: number }> = {
   '2x3': { rows: 2, columns: 3 },
@@ -8,7 +18,6 @@ const layouts: Record<Layout, { rows: number; columns: number }> = {
   '2x5': { rows: 2, columns: 5 },
 };
 const subjects = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治', '其他'];
-const fonts = ['Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi', 'Arial'];
 
 // 深色 / 浅色模式下的字体预设颜色（按顺序一一对应）
 const THEME_PALETTES: Record<Theme, string[]> = {
@@ -30,7 +39,7 @@ const defaultSettings: AppSettings = {
   background: THEME_SURFACES.dark.background,
   frame: THEME_SURFACES.dark.frame,
   locked: true,
-  font: 'Microsoft YaHei',
+  font: fontOptions[0].family,
   fontSize: 'medium',
   textColor: THEME_SURFACES.dark.textColor,
   bold: false,
@@ -194,7 +203,7 @@ function parseSettings(raw: Record<string, string>): AppSettings {
     background: raw.background ?? surfaces.background,
     frame: raw.frame ?? surfaces.frame,
     locked: raw.locked !== 'false',
-    font: raw.font ?? defaultSettings.font,
+    font: fontOptions.some((option) => option.family === raw.font) ? raw.font : defaultSettings.font,
     fontSize: raw.fontSize === 'small' || raw.fontSize === 'large' ? raw.fontSize : 'medium',
     textColor: savedTextColor ?? surfaces.textColor,
     bold: raw.bold === 'true',
@@ -237,6 +246,7 @@ function App() {
   const resizeRef = useRef<{ axis: 'columns' | 'rows'; index: number; start: number; values: number[] } | null>(null);
 
   useEffect(() => {
+    void loadLocalFonts();
     let alive = true;
     void window.schoolwork.load().then(({ content, settings: savedSettings }) => {
       if (!alive) return;
@@ -425,8 +435,9 @@ function App() {
     const fontStep = Math.max(-MAX_FONT_STEP, Math.min(MAX_FONT_STEP, calcStep));
     fontStepRef.current = fontStep;
     const size = calcStep < 0 ? 'small' : calcStep > 0 ? 'large' : level;
+    const matched = fontOptions.find((option) => computed.fontFamily.includes(option.family));
     const next: SelectedFormat = {
-      font: fonts.find((font) => computed.fontFamily.includes(font)) ?? computed.fontFamily.split(',')[0].replace(/"/g, '').trim(),
+      font: matched ? matched.family : settings.font,
       fontSize: size,
       textColor: cssColorToHex(computed.color),
       bold: window.document.queryCommandState('bold'),
@@ -680,7 +691,7 @@ function App() {
                     }
                   }}
                   style={{
-                    fontFamily: settings.font,
+                    fontFamily: fontStack(settings.font),
                     fontSize: `${cellFontSize}px`,
                     color: settings.textColor,
                     fontWeight: settings.bold ? 700 : 400,
@@ -706,13 +717,12 @@ function App() {
         <div className="selection-toolbar-row text-controls-row">
           <label className="floating-select font-select" title="字体">
             <span className="floating-caption">字体</span>
-            <span className="floating-value">{selectedFormat.font.replace('Microsoft ', '')}</span>
+            <span className="floating-value">{fontLabel(selectedFormat.font)}</span>
             <select className="select-hit-area" aria-label="选中文字字体" value={selectedFormat.font} onChange={(event) => {
               setSelectedFormat((current) => ({ ...current, font: event.target.value }));
-              applyInlineFormat('fontFamily', event.target.value);
+              applyInlineFormat('fontFamily', fontStack(event.target.value));
             }}>
-              {!fonts.includes(selectedFormat.font) && <option value={selectedFormat.font}>{selectedFormat.font}</option>}
-              {fonts.map((font) => <option key={font} value={font}>{font.replace('Microsoft ', '')}</option>)}
+              {fontOptions.map((option) => <option key={option.family} value={option.family}>{option.label}</option>)}
             </select>
           </label>
           <div className="font-size-controls" title="字号调整">
