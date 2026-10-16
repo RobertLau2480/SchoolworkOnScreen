@@ -14,6 +14,8 @@ export interface HomeworkDocument {
   rows: number[];
 }
 
+export type Theme = 'dark' | 'light';
+
 export interface AppSettings {
   background: string;
   frame: string;
@@ -23,6 +25,7 @@ export interface AppSettings {
   textColor: string;
   bold: boolean;
   highlight: string;
+  theme: Theme;
 }
 
 declare global {

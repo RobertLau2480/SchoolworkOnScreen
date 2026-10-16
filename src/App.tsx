@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import appIcon from '../icon.png';
-import type { AppSettings, HomeworkCell, HomeworkDocument, Layout } from './types';
+import type { AppSettings, HomeworkCell, HomeworkDocument, Layout, Theme } from './types';
 
 const layouts: Record<Layout, { rows: number; columns: number }> = {
   '2x3': { rows: 2, columns: 3 },
@@ -8,11 +8,29 @@ const layouts: Record<Layout, { rows: number; columns: number }> = {
   '2x5': { rows: 2, columns: 5 },
 };
 const subjects = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治', '其他'];
-const colors = ['#000000', '#ffffff', '#ffd83d', '#df4d47', '#3587d4', '#38a56b'];
 const fonts = ['Microsoft YaHei', 'SimHei', 'SimSun', 'KaiTi', 'Arial'];
+
+// 深色 / 浅色模式下的字体预设颜色（按顺序一一对应）
+const THEME_PALETTES: Record<Theme, string[]> = {
+  dark: ['#ffffff', '#ff5252', '#ffd83d', '#4d9fff', '#c77dff'],
+  light: ['#000000', '#c62828', '#b58900', '#1565c0', '#6a1b9a'],
+};
+// 每种模式对应的背景、表面与默认文字颜色
+const THEME_SURFACES: Record<Theme, { background: string; frame: string; textColor: string }> = {
+  dark: { background: '#29332f', frame: '#35413b', textColor: '#ffffff' },
+  light: { background: '#eef1ee', frame: '#ffffff', textColor: '#000000' },
+};
+
 const defaultSettings: AppSettings = {
-  background: '#29332f', frame: '#35413b', locked: true, font: 'Microsoft YaHei',
-  fontSize: 'medium', textColor: '#e6edef', bold: false, highlight: '#b85c1e',
+  background: THEME_SURFACES.dark.background,
+  frame: THEME_SURFACES.dark.frame,
+  locked: true,
+  font: 'Microsoft YaHei',
+  fontSize: 'medium',
+  textColor: THEME_SURFACES.dark.textColor,
+  bold: false,
+  highlight: '#b85c1e',
+  theme: 'dark',
 };
 const highlightColor = '#b85c1e';
 const legacyHighlightColors = ['#087f80', '#58d9e6'];
@@ -58,11 +76,39 @@ function fitEditor(editor: HTMLElement, baseSize: number): void {
 }
 
 function cssColorToHex(color: string): string {
-  if (color.startsWith('#')) return color;
+  if (color.startsWith('#')) return color.toLowerCase();
   const values = color.match(/[\d.]+/g)?.slice(0, 3).map(Number);
   return values?.length === 3
     ? `#${values.map((value) => Math.round(value).toString(16).padStart(2, '0')).join('')}`
     : '#e6edef';
+}
+
+/** 构建从 from 主题到 to 主题的字体颜色映射表。 */
+function buildColorMapping(from: Theme, to: Theme): Record<string, string> {
+  const mapping: Record<string, string> = {};
+  THEME_PALETTES[from].forEach((color, index) => {
+    mapping[color.toLowerCase()] = THEME_PALETTES[to][index];
+  });
+  return mapping;
+}
+
+/** 依据映射表替换 HTML 富文本中已有的行内文字颜色。 */
+function remapTextColors(html: string, mapping: Record<string, string>): string {
+  if (!html || !html.includes('color')) return html;
+  const container = window.document.createElement('div');
+  container.innerHTML = html;
+  let changed = false;
+  container.querySelectorAll<HTMLElement>('[style]').forEach((element) => {
+    const inline = element.style.color;
+    if (!inline) return;
+    const hex = cssColorToHex(inline);
+    const target = mapping[hex];
+    if (target && target.toLowerCase() !== hex) {
+      element.style.color = target;
+      changed = true;
+    }
+  });
+  return changed ? container.innerHTML : html;
 }
 
 /** 以文本字符偏移量保存选区，用于 DOM 变更后恢复。 */
@@ -119,21 +165,22 @@ function emptyDocument(layout: Layout): HomeworkDocument {
 }
 
 function parseSettings(raw: Record<string, string>): AppSettings {
-  const savedBackground = raw.background?.toLowerCase();
-  const savedFrame = raw.frame?.toLowerCase();
+  const theme: Theme = raw.theme === 'light' ? 'light' : 'dark';
+  const surfaces = THEME_SURFACES[theme];
   const savedTextColor = raw.textColor?.toLowerCase();
   const savedHighlight = raw.highlight === '#ffe979' || raw.highlight === '#58d9e6'
     ? highlightColor
     : raw.highlight;
   return {
-    background: savedBackground === '#e9edef' ? defaultSettings.background : (raw.background ?? defaultSettings.background),
-    frame: savedFrame === '#ffffff' ? defaultSettings.frame : (raw.frame ?? defaultSettings.frame),
+    background: raw.background ?? surfaces.background,
+    frame: raw.frame ?? surfaces.frame,
     locked: raw.locked !== 'false',
     font: raw.font ?? defaultSettings.font,
     fontSize: raw.fontSize === 'small' || raw.fontSize === 'large' ? raw.fontSize : 'medium',
-    textColor: savedTextColor === '#18242a' ? defaultSettings.textColor : (raw.textColor ?? defaultSettings.textColor),
+    textColor: savedTextColor ?? surfaces.textColor,
     bold: raw.bold === 'true',
     highlight: savedHighlight === highlightColor ? savedHighlight : highlightColor,
+    theme,
   };
 }
 
@@ -343,7 +390,7 @@ function App() {
     for (let element = anchor; element && element !== editor; element = element.parentElement) {
       const background = element.style.backgroundColor;
       if (background) {
-        const color = cssColorToHex(background).toLowerCase();
+        const color = cssColorToHex(background);
         highlighted = color === highlightColor || legacyHighlightColors.includes(color);
         if (highlighted) highlight = highlightColor;
         break;
@@ -480,8 +527,31 @@ function App() {
   };
 
   const toggleHighlight = () => {
-    // 优化高光：如果已高亮则取消高光（恢复为编辑器背景色），否则应用高光
     applyInlineFormat('backgroundColor', selectedFormat.highlighted ? 'var(--cell-bg)' : highlightColor);
+  };
+
+  const toggleTheme = () => {
+    const from: Theme = settings.theme;
+    const to: Theme = from === 'dark' ? 'light' : 'dark';
+    const mapping = buildColorMapping(from, to);
+    const surfaces = THEME_SURFACES[to];
+    // 把每个单元格富文本中的字体颜色按预设对应改写
+    setDocument((current) => ({
+      ...current,
+      cells: current.cells.map((cell) => cell.text ? { ...cell, text: remapTextColors(cell.text, mapping) } : cell),
+    }));
+    const nextTextColor = mapping[settings.textColor.toLowerCase()] ?? surfaces.textColor;
+    setSettings((current) => ({
+      ...current,
+      theme: to,
+      background: surfaces.background,
+      frame: surfaces.frame,
+      textColor: nextTextColor,
+    }));
+    setSelectedFormat((current) => ({
+      ...current,
+      textColor: mapping[current.textColor.toLowerCase()] ?? surfaces.textColor,
+    }));
   };
 
   const exportImage = async () => {
@@ -504,6 +574,7 @@ function App() {
 
   const { rows, columns } = layouts[document.layout];
   const cellFontSize = getBaseFontSize();
+  const palette = THEME_PALETTES[settings.theme];
   const gridStyle = {
     gridTemplateColumns: document.columns.map((value) => `${value}fr`).join(' '),
     gridTemplateRows: document.rows.map((value) => `${value}fr`).join(' '),
@@ -511,7 +582,7 @@ function App() {
   } as React.CSSProperties;
 
   return (
-    <main className="app-shell" style={{ '--app-bg': settings.background, '--cell-bg': settings.frame } as React.CSSProperties}>
+    <main className="app-shell" data-theme={settings.theme} style={{ '--app-bg': settings.background, '--cell-bg': settings.frame } as React.CSSProperties}>
       {!loaded && <div className="startup-overlay" role="status" aria-live="polite">
         <div className="startup-mark">作</div>
         <div className="startup-title">屏上作业</div>
@@ -622,11 +693,11 @@ function App() {
         <div className="selection-toolbar-row style-controls-row">
           <button className={`floating-format ${selectedFormat.bold ? 'selected' : ''}`} aria-label="粗体" title="粗体" onMouseDown={(event) => event.preventDefault()} onClick={applyBold}><b>B</b></button>
           <div className="floating-colors" aria-label="预设字体颜色">
-            {colors.map((color) => <button
+            {palette.map((color) => <button
               key={color}
               className={`floating-color ${selectedFormat.textColor.toLowerCase() === color ? 'active' : ''}`}
               style={{ '--swatch': color } as React.CSSProperties}
-              title={color === '#000000' ? '黑色' : color === '#ffffff' ? '白色' : color}
+              title={color}
               aria-label={`字体颜色 ${color}`}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => {
@@ -661,14 +732,10 @@ function App() {
               {Object.keys(layouts).map((layout) => <option key={layout} value={layout}>{layout}</option>)}
             </select>
           </label>
-          <label className="color-tool surface-color" title="背景颜色">
-            <span className="tool-caption">背景</span><span className="surface-swatch" style={{ backgroundColor: settings.background }} />
-            <input aria-label="背景颜色" type="color" value={settings.background} onChange={(event) => updateSettings({ background: event.target.value })} />
-          </label>
-          <label className="color-tool surface-color" title="表面颜色">
-            <span className="tool-caption">表面</span><span className="surface-swatch" style={{ backgroundColor: settings.frame }} />
-            <input aria-label="表面颜色" type="color" value={settings.frame} onChange={(event) => updateSettings({ frame: event.target.value })} />
-          </label>
+          <button className="theme-button" title={settings.theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'} onClick={toggleTheme}>
+            <span className="theme-icon">{settings.theme === 'dark' ? '☾' : '☀'}</span>
+            <span>{settings.theme === 'dark' ? '深色' : '浅色'}</span>
+          </button>
           <button className="export-button" title="导出 PNG 图片" onClick={() => void exportImage()} disabled={exporting}>
             <span aria-hidden="true">↧</span><span>{exporting ? '导出中' : '导出图片'}</span>
           </button>
