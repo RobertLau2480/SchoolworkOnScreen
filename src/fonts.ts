@@ -12,6 +12,7 @@ import fangZhengShuTiUrl from '../fonts/方正舒体.TTF?url';
 import kaiTiUrl from '../fonts/楷体.ttf?url';
 import hanYiLeMiaoTiUrl from '../fonts/汉仪乐喵体.otf?url';
 import liShuUrl from '../fonts/隶书.TTF?url';
+import microsoftYaHeiUrl from '../fonts/微软雅黑.ttc?url';
 
 export interface FontOption {
   /** 用于 CSS font-family 的字体族名 */
@@ -32,6 +33,7 @@ const rawFonts: { label: string; url: string; format: string }[] = [
   { label: '楷体', url: kaiTiUrl, format: 'truetype' },
   { label: '汉仪乐喵体', url: hanYiLeMiaoTiUrl, format: 'opentype' },
   { label: '隶书', url: liShuUrl, format: 'truetype' },
+  { label: '微软雅黑', url: microsoftYaHeiUrl, format: 'truetype' },
 ];
 
 /** 字体族名加前缀，避免与系统同名字体冲突。 */

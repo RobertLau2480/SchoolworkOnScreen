@@ -44,3 +44,13 @@ declare module '*.OTF?url' {
   const source: string;
   export default source;
 }
+
+declare module '*.ttc' {
+  const source: string;
+  export default source;
+}
+
+declare module '*.ttc?url' {
+  const source: string;
+  export default source;
+}
