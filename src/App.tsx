@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import appIcon from '../icon.png';
-import { fontOptions, loadLocalFonts } from './fonts';
+import { DEFAULT_FONT_FAMILY, fontOptions, loadLocalFonts } from './fonts';
 import type { AppSettings, HomeworkCell, HomeworkDocument, Layout, Theme } from './types';
 
 /** 由 font-family 取列表展示名（去掉前缀）。 */
@@ -34,12 +34,13 @@ const THEME_SURFACES: Record<Theme, { background: string; frame: string; textCol
 const HIGHLIGHT_COLORS: Record<Theme, string> = { dark: '#b85c1e', light: '#fff176' };
 const LEGACY_HIGHLIGHT_COLORS = ['#087f80', '#58d9e6'];
 const VERSION = '1.1.0';
+const BUILD_DATE = '2026年10月16日';
 
 const defaultSettings: AppSettings = {
   background: THEME_SURFACES.dark.background,
   frame: THEME_SURFACES.dark.frame,
   locked: true,
-  font: fontOptions[0].family,
+  font: DEFAULT_FONT_FAMILY,
   fontSize: 'medium',
   textColor: THEME_SURFACES.dark.textColor,
   bold: false,
@@ -796,7 +797,7 @@ function App() {
             <div><h2 id="about-title">屏上作业</h2><p>SchoolworkOnScreen</p></div>
           </div>
           <dl className="about-details">
-            <div><dt>版本</dt><dd>v{VERSION}</dd></div>
+            <div><dt>版本</dt><dd>v{VERSION} · {BUILD_DATE}</dd></div>
             <div><dt>项目地址</dt><dd><a href="https://github.com/RobertLau2480/SchoolworkOnScreen" target="_blank" rel="noreferrer">https://github.com/RobertLau2480/SchoolworkOnScreen</a></dd></div>
             <div><dt>作者</dt><dd>OctSeventh（RobertLau）</dd></div>
           </dl>
