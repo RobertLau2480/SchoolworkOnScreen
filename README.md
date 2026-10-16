@@ -2,12 +2,13 @@
 
 > 面向 Windows 的本地作业展示程序，让作业内容清晰呈现在屏幕上。
 
+![Version](https://img.shields.io/badge/version-1.1.1-blue)
 ![Electron](https://img.shields.io/badge/Electron-22.3.27-47848F?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18.2.0-61DAFB?logo=react&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4.5-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-4.5.3-646CFF?logo=vite&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%201703%2B-0078D6?logo=windows&logoColor=white)
-![License](https://img.shields.io/badge/License-Private-red)
+![License](https://img.shields.io/badge/License-GPLv3-blue)
 
 ---
 
@@ -15,23 +16,29 @@
 
 **屏上作业** 是一款面向 Windows 的本地作业展示程序。它使用 Electron 容器承载 React Web UI，数据完全保存在本机，不经过任何网络传输。作业内容和设置分别以 `content.json`、`config.ini` 文件保存在程序 EXE 同目录，方便备份和迁移。
 
+程序内置 **12 款中文字体**（WOFF2 压缩），并提供 **深色 / 浅色两套主题**，适合在触摸屏或大屏上展示每日作业。
+
 ## ✨ 功能特性
 
 ### 📝 作业管理
 - **多种网格布局**：支持 2x3、2x4、2x5 作业格，切换时二次确认并清空内容
 - **灵活编辑**：编辑科目与作业文本，自动换行、自动保存
 - **智能缩放**：内容过多时自动缩小字体，保证完整显示
+- **修改时间标记**：每格右上角显示上次修改时间（"xx分钟前 / xx小时前 / xx天前"），
+  12 小时内为灰色、超过 12 小时为黄色；**仅在内容真正变更时刷新**
 
 ### 🎨 文本格式化
-- 对选中文字应用**字体**、**字号**、**颜色**、**粗体**、**斜体**设置
-- 支持**青色**和**黄色**高光标记重点内容
+- 对选中文字应用**字体**、**字号**、**颜色**、**粗体**设置
+- **字号微调**：`A−` / `A+` 按钮在基准字号上最多增减 5 档，仅作用于选中文字
+- **主题高光**：高亮颜色随主题联动（深色为暖橙、浅色为亮黄），避免颜色叠加
 
-### 🖥️ 界面定制
+### 🎨 界面定制
+- **深色 / 浅色模式**：一键切换，字体颜色预设与高光颜色同步映射
 - **网格锁定**：锁定或解锁网格尺寸，解锁后可自由拖动分隔线调整单元格大小
-- **颜色主题**：自定义背景与单元格颜色
 - **导出图片**：一键导出网格为 PNG 图片
 
 ### ⚡ 系统集成
+- **启动即最大化**：程序启动时自动最大化窗口
 - **防休眠**：窗口获得前台焦点时阻止显示器休眠，失焦或关闭后恢复系统策略
 
 ## 🚀 快速开始
@@ -67,14 +74,18 @@ npm run package:windows
 ```
 SchoolworkOnScreen/
 ├── 📂 electron/              # Electron 主进程
-│   ├── main.ts               # 主进程入口
+│   ├── main.ts               # 主进程入口（默认最大化、防休眠、IPC 处理）
 │   └── preload.ts            # 预加载脚本（IPC 桥接）
 ├── 📂 src/                   # React 渲染进程
 │   ├── App.tsx               # 主应用组件
 │   ├── main.tsx              # React 入口
-│   ├── styles.css            # 全局样式
+│   ├── styles.css            # 全局样式（含深浅主题）
+│   ├── fonts.ts              # 本地字体加载与注册
 │   ├── types.ts              # TypeScript 类型定义
 │   └── assets.d.ts           # 资源类型声明
+├── 📂 fonts/                 # 字体源文件（TTF / OTF / TTC）
+├── 📂 fonts-woff2/           # WOFF2 压缩字体（供程序使用）
+├── 📄 convert-fonts.py       # 字体 TTF/OTF → WOFF2 转换脚本
 ├── 📄 config.ini             # 外观配置（运行时生成）
 ├── 📄 content.json           # 作业内容数据（运行时生成）
 ├── 📄 index.html             # HTML 入口
@@ -83,6 +94,37 @@ SchoolworkOnScreen/
 ├── 📄 tsconfig.json          # TypeScript 配置
 └── 📄 tsconfig.electron.json # Electron TypeScript 配置
 ```
+
+## 🔤 内置字体
+
+程序内置以下 12 款中文字体，字体选择列表显示文件名（去掉后缀）：
+
+| 展示名 | 展示名 | 展示名 |
+|---|---|---|
+| 仿宋 | 华文中宋 | 华文新魏 |
+| 幼圆 | 思源宋体 | **思源黑体**（默认） |
+| 方正姚体 | 方正舒体 | 楷体 |
+| 汉仪乐喵体 | 隶书 | 微软雅黑 |
+
+字体在应用启动时通过 `FontFace` API 异步注册。为精简安装体积，`fonts/` 下的 TTF/OTF/TTC 会经 `convert-fonts.py` 转换为 **WOFF2**（体积减少约 50%），程序实际加载的是 `fonts-woff2/` 中的压缩文件。
+
+如需自行转换字体，安装依赖后运行：
+
+```powershell
+pip install fonttools brotli
+python convert-fonts.py
+```
+
+## 🎨 主题与配色
+
+| 元素 | 深色模式 | 浅色模式 |
+|---|---|---|
+| 背景 | `#29332f` | `#eef1ee` |
+| 单元格 | `#35413b` | `#ffffff` |
+| 默认文字 | 白 `#ffffff` | 黑 `#000000` |
+| 高光 | 暖橙 `#b85c1e` | 亮黄 `#fff176` |
+
+字体颜色预设在切换主题时按顺序一一对应映射，高光颜色同步切换。
 
 ## 📊 数据格式
 
@@ -93,28 +135,28 @@ SchoolworkOnScreen/
 ```ini
 [appearance]
 background=#29332f        ; 背景颜色
-frame=#35413b             ; 表框颜色
+frame=#35413b             ; 单元格颜色
 layout=2x3                ; 网格布局
 locked=true               ; 网格是否锁定
-font=Microsoft YaHei       ; 默认字体
+font=SWOS-思源黑体         ; 默认字体（族名带 SWOS- 前缀）
 fontSize=medium           ; 默认字号
-textColor=#e6edef         ; 文字颜色
+textColor=#ffffff         ; 文字颜色
 bold=false                ; 是否粗体
-italic=false              ; 是否斜体
 highlight=#b85c1e         ; 高光颜色
+theme=dark                ; 主题（dark / light）
 ```
 
 ### `content.json`
 
-带有 `version` 字段，保存布局、每格科目与 HTML 文本，以及行列比例：
+带有 `version` 字段，保存布局、每格科目与 HTML 文本、行列比例及修改时间：
 
 ```json
 {
   "version": 1,
   "layout": "2x3",
   "cells": [
-    { "subject": "语文", "text": "" },
-    { "subject": "数学", "text": "" }
+    { "subject": "语文", "text": "", "lastModified": null },
+    { "subject": "数学", "text": "", "lastModified": 1729000000000 }
   ],
   "columns": [1, 1, 1],
   "rows": [1, 1]
@@ -127,6 +169,7 @@ highlight=#b85c1e         ; 高光颜色
 
 - 渲染进程启用 **`contextIsolation`**、关闭 **Node 集成**并运行在 **sandbox** 中
 - 文件读写、窗口控制和系统休眠控制仅经 **preload 暴露的窄 IPC API** 处理
+- 仅允许打开项目 GitHub 地址这一条外部链接，其余 `window.open` 请求一律拒绝
 - 作业文本允许保留编辑器生成的富文本 HTML，因此**不应从不可信来源导入 `content.json`**
 
 ## 🖥️ Windows 兼容性
@@ -137,4 +180,8 @@ highlight=#b85c1e         ; 高光颜色
 
 ## 📄 许可证
 
-本项目为私有项目，保留所有权利。
+本项目基于 **GNU General Public License v3.0 (GPLv3)** 授权发布。
+
+版权所有 © 2026 OctSeventh（RobertLau）
+
+这意味着你可以自由使用、修改和分发本软件，但衍生作品必须以相同许可证开源，并保留原作者版权声明。完整条款见仓库根目录的 [LICENSE](LICENSE) 文件。
