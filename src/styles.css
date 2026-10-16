@@ -468,6 +468,9 @@ button { color: inherit; }
   cursor: pointer;
 }
 .controlbar .about-button:hover { color: #e7f0f1; background: #243238; border-color: #3f5056; }
+.controlbar-left { display: flex; align-items: center; gap: 10px; margin-right: auto; }
+.controlbar-left .about-button { margin-right: 0; }
+.version-tag { color: #6f8079; font-size: 12px; letter-spacing: .3px; user-select: none; }
 .controlbar .table-tools { width: auto; flex: 0 0 auto; gap: 8px; }
 .controlbar .tool-select, .controlbar .color-tool { height: 40px; }
 .controlbar .selected-value { pointer-events: none; }
@@ -715,3 +718,4 @@ button { color: inherit; }
 [data-theme='light'] .about-heading p { color: #7d8d87; }
 [data-theme='light'] .about-details dt { color: #7d8d87; }
 [data-theme='light'] .about-details dd { color: #24322d; }
+[data-theme='light'] .version-tag { color: #7d8d87; }

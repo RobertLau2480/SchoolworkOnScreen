@@ -21,6 +21,11 @@ const THEME_SURFACES: Record<Theme, { background: string; frame: string; textCol
   light: { background: '#eef1ee', frame: '#ffffff', textColor: '#000000' },
 };
 
+// 高光颜色：深色模式保留原色，浅色模式使用很亮的黄色
+const HIGHLIGHT_COLORS: Record<Theme, string> = { dark: '#b85c1e', light: '#fff176' };
+const LEGACY_HIGHLIGHT_COLORS = ['#087f80', '#58d9e6'];
+const VERSION = '1.1.0';
+
 const defaultSettings: AppSettings = {
   background: THEME_SURFACES.dark.background,
   frame: THEME_SURFACES.dark.frame,
@@ -29,11 +34,9 @@ const defaultSettings: AppSettings = {
   fontSize: 'medium',
   textColor: THEME_SURFACES.dark.textColor,
   bold: false,
-  highlight: '#b85c1e',
+  highlight: HIGHLIGHT_COLORS.dark,
   theme: 'dark',
 };
-const highlightColor = '#b85c1e';
-const legacyHighlightColors = ['#087f80', '#58d9e6'];
 const FONT_SIZES = { small: 26, medium: 30, large: 34 } as const;
 const FONT_STEP_SIZE = 2;
 const MAX_FONT_STEP = 5;
@@ -111,6 +114,25 @@ function remapTextColors(html: string, mapping: Record<string, string>): string 
   return changed ? container.innerHTML : html;
 }
 
+/** 依据映射表替换 HTML 富文本中已有的高光背景色。 */
+function remapHighlightColors(html: string, mapping: Record<string, string>): string {
+  if (!html || !html.includes('background')) return html;
+  const container = window.document.createElement('div');
+  container.innerHTML = html;
+  let changed = false;
+  container.querySelectorAll<HTMLElement>('[style]').forEach((element) => {
+    const inline = element.style.backgroundColor;
+    if (!inline) return;
+    const hex = cssColorToHex(inline);
+    const target = mapping[hex];
+    if (target && target.toLowerCase() !== hex) {
+      element.style.backgroundColor = target;
+      changed = true;
+    }
+  });
+  return changed ? container.innerHTML : html;
+}
+
 /** 以文本字符偏移量保存选区，用于 DOM 变更后恢复。 */
 function saveSelectionOffsets(editor: HTMLElement, range: Range): { start: number; end: number } {
   const pre = window.document.createRange();
@@ -168,9 +190,6 @@ function parseSettings(raw: Record<string, string>): AppSettings {
   const theme: Theme = raw.theme === 'light' ? 'light' : 'dark';
   const surfaces = THEME_SURFACES[theme];
   const savedTextColor = raw.textColor?.toLowerCase();
-  const savedHighlight = raw.highlight === '#ffe979' || raw.highlight === '#58d9e6'
-    ? highlightColor
-    : raw.highlight;
   return {
     background: raw.background ?? surfaces.background,
     frame: raw.frame ?? surfaces.frame,
@@ -179,7 +198,7 @@ function parseSettings(raw: Record<string, string>): AppSettings {
     fontSize: raw.fontSize === 'small' || raw.fontSize === 'large' ? raw.fontSize : 'medium',
     textColor: savedTextColor ?? surfaces.textColor,
     bold: raw.bold === 'true',
-    highlight: savedHighlight === highlightColor ? savedHighlight : highlightColor,
+    highlight: HIGHLIGHT_COLORS[theme],
     theme,
   };
 }
@@ -385,14 +404,15 @@ function App() {
     if (!editor) return;
     const computed = window.getComputedStyle(anchor ?? editor);
     const pixelSize = Number.parseFloat(computed.fontSize);
-    let highlight = highlightColor;
+    const themeHighlight = HIGHLIGHT_COLORS[settings.theme];
+    let highlight = themeHighlight;
     let highlighted = false;
     for (let element = anchor; element && element !== editor; element = element.parentElement) {
       const background = element.style.backgroundColor;
       if (background) {
         const color = cssColorToHex(background);
-        highlighted = color === highlightColor || legacyHighlightColors.includes(color);
-        if (highlighted) highlight = highlightColor;
+        highlighted = color === HIGHLIGHT_COLORS.dark || color === HIGHLIGHT_COLORS.light || LEGACY_HIGHLIGHT_COLORS.includes(color);
+        if (highlighted) highlight = themeHighlight;
         break;
       }
     }
@@ -527,18 +547,28 @@ function App() {
   };
 
   const toggleHighlight = () => {
-    applyInlineFormat('backgroundColor', selectedFormat.highlighted ? 'var(--cell-bg)' : highlightColor);
+    // 优化高光：已高亮则取消（恢复单元格背景色），否则应用当前主题的高光色
+    applyInlineFormat('backgroundColor', selectedFormat.highlighted ? 'var(--cell-bg)' : HIGHLIGHT_COLORS[settings.theme]);
   };
 
   const toggleTheme = () => {
     const from: Theme = settings.theme;
     const to: Theme = from === 'dark' ? 'light' : 'dark';
     const mapping = buildColorMapping(from, to);
+    // 高光颜色映射：任意主题（含历史）的高光都切到目标主题的高光色
+    const highlightMapping: Record<string, string> = {
+      [HIGHLIGHT_COLORS.dark]: HIGHLIGHT_COLORS[to],
+      [HIGHLIGHT_COLORS.light]: HIGHLIGHT_COLORS[to],
+      '#087f80': HIGHLIGHT_COLORS[to],
+      '#58d9e6': HIGHLIGHT_COLORS[to],
+    };
     const surfaces = THEME_SURFACES[to];
-    // 把每个单元格富文本中的字体颜色按预设对应改写
+    // 把每个单元格富文本中的字体颜色与高光颜色按预设对应改写
     setDocument((current) => ({
       ...current,
-      cells: current.cells.map((cell) => cell.text ? { ...cell, text: remapTextColors(cell.text, mapping) } : cell),
+      cells: current.cells.map((cell) => cell.text
+        ? { ...cell, text: remapHighlightColors(remapTextColors(cell.text, mapping), highlightMapping) }
+        : cell),
     }));
     const nextTextColor = mapping[settings.textColor.toLowerCase()] ?? surfaces.textColor;
     setSettings((current) => ({
@@ -547,10 +577,12 @@ function App() {
       background: surfaces.background,
       frame: surfaces.frame,
       textColor: nextTextColor,
+      highlight: HIGHLIGHT_COLORS[to],
     }));
     setSelectedFormat((current) => ({
       ...current,
       textColor: mapping[current.textColor.toLowerCase()] ?? surfaces.textColor,
+      highlight: HIGHLIGHT_COLORS[to],
     }));
   };
 
@@ -708,7 +740,7 @@ function App() {
           </div>
           <div className="floating-highlight" aria-label="高光设置">
             <button
-              style={{ '--highlight': highlightColor } as React.CSSProperties}
+              style={{ '--highlight': HIGHLIGHT_COLORS[settings.theme] } as React.CSSProperties}
               className={`highlight-toggle ${selectedFormat.highlighted ? 'selected' : ''}`}
               aria-label={selectedFormat.highlighted ? '取消高光' : '应用高光'}
               title={selectedFormat.highlighted ? '取消高光' : '应用高光'}
@@ -720,7 +752,10 @@ function App() {
       </div>}
 
       <footer className="controlbar">
-        <button className="about-button" onClick={() => setAboutOpen(true)}>关于</button>
+        <div className="controlbar-left">
+          <button className="about-button" onClick={() => setAboutOpen(true)}>关于</button>
+          <span className="version-tag">v{VERSION}</span>
+        </div>
         <div className="table-tools" aria-label="表格控制">
           <button className={`lock-button ${settings.locked ? 'locked' : ''}`} title={settings.locked ? '解锁表格尺寸' : '锁定表格尺寸'} onClick={() => updateSettings({ locked: !settings.locked })}>
             <span className="lock-icon">{settings.locked ? '▣' : '⠿'}</span><span>{settings.locked ? '已锁定' : '可调整'}</span>
@@ -751,6 +786,7 @@ function App() {
             <div><h2 id="about-title">屏上作业</h2><p>SchoolworkOnScreen</p></div>
           </div>
           <dl className="about-details">
+            <div><dt>版本</dt><dd>v{VERSION}</dd></div>
             <div><dt>项目地址</dt><dd><a href="https://github.com/RobertLau2480/SchoolworkOnScreen" target="_blank" rel="noreferrer">https://github.com/RobertLau2480/SchoolworkOnScreen</a></dd></div>
             <div><dt>作者</dt><dd>OctSeventh（RobertLau）</dd></div>
           </dl>
