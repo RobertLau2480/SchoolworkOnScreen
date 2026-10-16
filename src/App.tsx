@@ -65,6 +65,48 @@ function cssColorToHex(color: string): string {
     : '#e6edef';
 }
 
+/** 以文本字符偏移量保存选区，用于 DOM 变更后恢复。 */
+function saveSelectionOffsets(editor: HTMLElement, range: Range): { start: number; end: number } {
+  const pre = window.document.createRange();
+  pre.selectNodeContents(editor);
+  pre.setEnd(range.startContainer, range.startOffset);
+  const start = pre.toString().length;
+  return { start, end: start + range.toString().length };
+}
+
+/** 按文本字符偏移量恢复选区。 */
+function restoreSelectionOffsets(editor: HTMLElement, start: number, end: number): Range {
+  const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  let count = 0;
+  let startNode: Node = editor;
+  let endNode: Node = editor;
+  let startOffset = 0;
+  let endOffset = 0;
+  let node = walker.nextNode();
+  while (node) {
+    const length: number = (node as Text).length;
+    if (startNode === editor && count + length >= start) {
+      startNode = node;
+      startOffset = start - count;
+    }
+    if (endNode === editor && count + length >= end) {
+      endNode = node;
+      endOffset = end - count;
+      break;
+    }
+    count += length;
+    node = walker.nextNode();
+  }
+  const range = window.document.createRange();
+  try {
+    range.setStart(startNode, Math.max(0, startOffset));
+    range.setEnd(endNode, Math.max(0, endOffset));
+  } catch {
+    range.selectNodeContents(editor);
+  }
+  return range;
+}
+
 function emptyDocument(layout: Layout): HomeworkDocument {
   const { rows, columns } = layouts[layout];
   return {
@@ -123,6 +165,7 @@ function App() {
   const selectionRectRef = useRef<{ left: number; top: number; right: number; bottom: number } | null>(null);
   const toolbarPointerRef = useRef(false);
   const selectionRef = useRef<Range | null>(null);
+  const fontStepRef = useRef(0);
   const fitFramesRef = useRef(new WeakMap<HTMLElement, number>());
   const inputTimersRef = useRef(new Map<number, number>());
   const resizeRef = useRef<{ axis: 'columns' | 'rows'; index: number; start: number; values: number[] } | null>(null);
@@ -147,6 +190,7 @@ function App() {
         highlighted: false,
         fontStep: 0,
       });
+      fontStepRef.current = 0;
       setLoaded(true);
     }).catch(() => setLoaded(true));
     void window.schoolwork.isMaximized().then(setMaximized);
@@ -312,6 +356,7 @@ function App() {
     const ratio = editorSize > 0 ? pixelSize / editorSize : 1;
     const calcStep = Math.round((ratio - 1) * (stepBase / FONT_STEP_SIZE));
     const fontStep = Math.max(-MAX_FONT_STEP, Math.min(MAX_FONT_STEP, calcStep));
+    fontStepRef.current = fontStep;
     const size = calcStep < 0 ? 'small' : calcStep > 0 ? 'large' : level;
     const next: SelectedFormat = {
       font: fonts.find((font) => computed.fontFamily.includes(font)) ?? computed.fontFamily.split(',')[0].replace(/"/g, '').trim(),
@@ -376,7 +421,22 @@ function App() {
     const editor = (node.nodeType === Node.ELEMENT_NODE ? node as HTMLElement : node.parentElement)?.closest<HTMLElement>('.cell-editor');
     if (!editor) return;
 
-    const range = savedRange.cloneRange();
+    let range = savedRange.cloneRange();
+
+    // 应用字号前，先展开（unwrap）选区内已有的字号 span，避免嵌套导致 em 比例相乘
+    if (property === 'fontSize') {
+      const offsets = saveSelectionOffsets(editor, range);
+      editor.querySelectorAll<HTMLElement>('span').forEach((span) => {
+        if (!span.style.fontSize) return;
+        if (!range.intersectsNode(span)) return;
+        const parent = span.parentNode;
+        if (!parent) return;
+        while (span.firstChild) parent.insertBefore(span.firstChild, span);
+        parent.removeChild(span);
+      });
+      range = restoreSelectionOffsets(editor, offsets.start, offsets.end);
+    }
+
     const collapsed = range.collapsed;
     const span = window.document.createElement('span');
     if (property === 'fontSize') {
@@ -406,9 +466,11 @@ function App() {
   };
 
   const changeFontStep = (delta: number) => {
-    const newStep = Math.max(-MAX_FONT_STEP, Math.min(MAX_FONT_STEP, selectedFormat.fontStep + delta));
-    if (newStep === selectedFormat.fontStep) return;
-    setSelectedFormat((current) => ({ ...current, fontStep: newStep }));
+    const current = fontStepRef.current;
+    const newStep = Math.max(-MAX_FONT_STEP, Math.min(MAX_FONT_STEP, current + delta));
+    if (newStep === current) return;
+    fontStepRef.current = newStep;
+    setSelectedFormat((format) => ({ ...format, fontStep: newStep }));
     const targetSize = getBaseFontSize(settings.fontSize) + newStep * FONT_STEP_SIZE;
     applyInlineFormat('fontSize', `${targetSize}px`);
   };
@@ -475,11 +537,15 @@ function App() {
             return (
               <article key={`${document.layout}-${index}`} className="homework-cell" style={{ backgroundColor: settings.frame }}>
                 <div className="cell-heading">
-                  <span className="cell-index">{String(index + 1).padStart(2, '0')}</span>
                   <input aria-label={`第${index + 1}格科目`} value={cell.subject} onChange={(event) => {
                     updateCell(index, { subject: event.target.value });
                     markCellModified(index);
                   }} placeholder="科目" />
+                  {timeText && (
+                    <span className={`cell-modified-time ${stale ? 'stale' : ''}`} title={`上次修改时间：${new Date(cell.lastModified ?? 0).toLocaleString('zh-CN')}`}>
+                      {timeText}
+                    </span>
+                  )}
                 </div>
                 <div
                   className="cell-editor"
@@ -517,11 +583,6 @@ function App() {
                     fontWeight: settings.bold ? 700 : 400,
                   }}
                 />
-                {timeText && (
-                  <div className={`cell-modified-time ${stale ? 'stale' : ''}`} title={`上次修改时间：${new Date(cell.lastModified ?? 0).toLocaleString('zh-CN')}`}>
-                    {timeText}
-                  </div>
-                )}
                 {!settings.locked && column < columns - 1 && <button className="resize-handle col-resize" title="拖动调整列宽" aria-label="拖动调整列宽" onPointerDown={(event) => resizeStart('columns', column, event)} />}
                 {!settings.locked && row < rows - 1 && <button className="resize-handle row-resize" title="拖动调整行高" aria-label="拖动调整行高" onPointerDown={(event) => resizeStart('rows', row, event)} />}
               </article>
