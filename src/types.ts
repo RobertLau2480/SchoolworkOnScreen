@@ -3,6 +3,7 @@ export type Layout = '2x3' | '2x4' | '2x5';
 export interface HomeworkCell {
   subject: string;
   text: string;
+  lastModified?: number;
 }
 
 export interface HomeworkDocument {

@@ -16,6 +16,26 @@ const defaultSettings: AppSettings = {
 };
 const highlightColor = '#b85c1e';
 const legacyHighlightColors = ['#087f80', '#58d9e6'];
+const FONT_SIZES = { small: 20, medium: 24, large: 28 } as const;
+const MIN_FONT_SIZE = 12;
+
+function formatRelativeTime(timestamp: number | null | undefined, now: number): string {
+  if (!timestamp) return '';
+  const diff = now - timestamp;
+  if (diff < 0) return '刚刚';
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return '刚刚';
+  if (minutes < 60) return `${minutes}分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}小时前`;
+  const days = Math.floor(hours / 24);
+  return `${days}天前`;
+}
+
+function isTimeStale(timestamp: number | null | undefined, now: number): boolean {
+  if (!timestamp) return false;
+  return now - timestamp > 12 * 60 * 60 * 1000;
+}
 
 type SelectedFormat = Pick<AppSettings, 'font' | 'fontSize' | 'textColor' | 'bold' | 'highlight'> & { highlighted: boolean };
 
@@ -24,7 +44,7 @@ function fitEditor(editor: HTMLElement, baseSize: number): void {
   editor.style.fontSize = `${baseSize}px`;
   if (!overflows()) return;
 
-  let low = 6;
+  let low = MIN_FONT_SIZE;
   let high = baseSize;
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const size = (low + high) / 2;
@@ -90,11 +110,12 @@ function App() {
     bold: false, highlight: defaultSettings.highlight, highlighted: false,
   });
   const [toolbarVisible, setToolbarVisible] = useState(false);
-  const [toolbarPosition, setToolbarPosition] = useState({ left: 0, top: 0, side: 'above' as 'above' | 'below' });
+  const [toolbarPosition, setToolbarPosition] = useState({ left: 0, top: 0, side: 'below' as 'above' | 'below' });
   const [aboutOpen, setAboutOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [now, setNow] = useState(Date.now());
   const gridRef = useRef<HTMLElement>(null);
   const formatToolbarRef = useRef<HTMLDivElement>(null);
   const selectionRectRef = useRef<{ left: number; top: number; right: number; bottom: number } | null>(null);
@@ -127,6 +148,12 @@ function App() {
     }).catch(() => setLoaded(true));
     void window.schoolwork.isMaximized().then(setMaximized);
     return () => { alive = false; };
+  }, []);
+
+  // 每分钟刷新一次相对时间显示
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -164,7 +191,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const baseSize = settings.fontSize === 'small' ? 15 : settings.fontSize === 'large' ? 22 : 18;
+    const baseSize = FONT_SIZES[settings.fontSize];
     const fitAll = () => gridRef.current?.querySelectorAll<HTMLElement>('.cell-editor').forEach((editor) => fitEditor(editor, baseSize));
     const observer = new ResizeObserver((entries) => {
       entries.forEach(({ target }) => {
@@ -189,17 +216,23 @@ function App() {
     }));
   };
 
+  const markCellModified = (index: number) => {
+    updateCell(index, { lastModified: Date.now() });
+  };
+
   const queueContentUpdate = (index: number, editor: HTMLElement, immediate = false) => {
     const pending = inputTimersRef.current.get(index);
     if (pending) window.clearTimeout(pending);
     if (immediate) {
       inputTimersRef.current.delete(index);
       updateCell(index, { text: editor.innerHTML });
+      markCellModified(index);
       return;
     }
     inputTimersRef.current.set(index, window.setTimeout(() => {
       inputTimersRef.current.delete(index);
       updateCell(index, { text: editor.innerHTML });
+      markCellModified(index);
     }, 120));
   };
 
@@ -240,10 +273,10 @@ function App() {
     setToolbarVisible(true);
     const bounds = range.getBoundingClientRect();
     selectionRectRef.current = { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom };
-    const side = bounds.top > 140 ? 'above' : 'below';
+    const side = 'below';
     setToolbarPosition({
       left: bounds.left + bounds.width / 2,
-      top: side === 'above' ? bounds.top : bounds.bottom,
+      top: bounds.bottom + 10,
       side,
     });
     const anchor = selection.anchorNode?.nodeType === Node.ELEMENT_NODE
@@ -264,7 +297,7 @@ function App() {
         break;
       }
     }
-    const size = pixelSize < 15 ? 'small' : pixelSize >= 21 ? 'large' : 'medium';
+    const size = pixelSize < FONT_SIZES.small ? 'small' : pixelSize >= FONT_SIZES.large ? 'large' : 'medium';
     const next: SelectedFormat = {
       font: fonts.find((font) => computed.fontFamily.includes(font)) ?? computed.fontFamily.split(',')[0].replace(/"/g, '').trim(),
       fontSize: size,
@@ -308,19 +341,14 @@ function App() {
     const bounds = toolbar.getBoundingClientRect();
     const anchorCenter = (selectionBounds.left + selectionBounds.right) / 2;
     const left = Math.min(window.innerWidth - bounds.width - 8, Math.max(8, anchorCenter - bounds.width / 2));
-    const aboveTop = selectionBounds.top - bounds.height - 10;
+    // 始终显示在文字下方
     const belowTop = selectionBounds.bottom + 10;
-    const canPlaceAbove = aboveTop >= 8;
-    const canPlaceBelow = belowTop + bounds.height <= window.innerHeight - 8;
-    const prefersAbove = selectionBounds.top > 140;
-    const side = prefersAbove && canPlaceAbove
-      ? 'above'
-      : !canPlaceBelow && canPlaceAbove ? 'above' : 'below';
-    const top = side === 'above'
-      ? Math.max(8, aboveTop)
-      : Math.min(window.innerHeight - bounds.height - 8, belowTop);
-    if (left !== toolbarPosition.left || top !== toolbarPosition.top || side !== toolbarPosition.side) {
-      setToolbarPosition({ left, top, side });
+    const top = Math.min(window.innerHeight - bounds.height - 8, belowTop);
+    const side = 'below';
+    // 如果下方放不下，允许滚动到底部位置
+    const finalTop = top < 8 ? Math.max(8, top) : top;
+    if (left !== toolbarPosition.left || finalTop !== toolbarPosition.top || side !== toolbarPosition.side) {
+      setToolbarPosition({ left, top: finalTop, side });
     }
   }, [toolbarPosition, toolbarVisible, selectedFormat]);
 
@@ -336,7 +364,7 @@ function App() {
     const collapsed = range.collapsed;
     const span = window.document.createElement('span');
     if (property === 'fontSize') {
-      const baseSize = settings.fontSize === 'small' ? 15 : settings.fontSize === 'large' ? 22 : 18;
+      const baseSize = FONT_SIZES[settings.fontSize];
       span.style.fontSize = `${Number.parseFloat(value) / baseSize}em`;
     } else {
       span.style[property] = value;
@@ -357,6 +385,7 @@ function App() {
     editor.focus();
     const index = Number(editor.dataset.cellIndex);
     updateCell(index, { text: editor.innerHTML });
+    markCellModified(index);
     readSelectionFormat();
   };
 
@@ -387,7 +416,7 @@ function App() {
   };
 
   const { rows, columns } = layouts[document.layout];
-  const cellFontSize = settings.fontSize === 'small' ? 15 : settings.fontSize === 'large' ? 22 : 18;
+  const cellFontSize = FONT_SIZES[settings.fontSize];
   const gridStyle = {
     gridTemplateColumns: document.columns.map((value) => `${value}fr`).join(' '),
     gridTemplateRows: document.rows.map((value) => `${value}fr`).join(' '),
@@ -416,11 +445,16 @@ function App() {
           {document.cells.map((cell, index) => {
             const row = Math.floor(index / columns);
             const column = index % columns;
+            const timeText = formatRelativeTime(cell.lastModified, now);
+            const stale = isTimeStale(cell.lastModified, now);
             return (
               <article key={`${document.layout}-${index}`} className="homework-cell" style={{ backgroundColor: settings.frame }}>
                 <div className="cell-heading">
                   <span className="cell-index">{String(index + 1).padStart(2, '0')}</span>
-                  <input aria-label={`第${index + 1}格科目`} value={cell.subject} onChange={(event) => updateCell(index, { subject: event.target.value })} placeholder="科目" />
+                  <input aria-label={`第${index + 1}格科目`} value={cell.subject} onChange={(event) => {
+                    updateCell(index, { subject: event.target.value });
+                    markCellModified(index);
+                  }} placeholder="科目" />
                   <span className="cell-grip" aria-hidden="true">⠿</span>
                 </div>
                 <div
@@ -436,7 +470,7 @@ function App() {
                     queueContentUpdate(index, editor);
                     const pending = fitFramesRef.current.get(editor);
                     if (pending) window.cancelAnimationFrame(pending);
-                    const baseSize = settings.fontSize === 'small' ? 15 : settings.fontSize === 'large' ? 22 : 18;
+                    const baseSize = FONT_SIZES[settings.fontSize];
                     fitFramesRef.current.set(editor, window.requestAnimationFrame(() => fitEditor(editor, baseSize)));
                     readSelectionFormat();
                   }}
@@ -459,6 +493,11 @@ function App() {
                     fontWeight: settings.bold ? 700 : 400,
                   }}
                 />
+                {timeText && (
+                  <div className={`cell-modified-time ${stale ? 'stale' : ''}`} title={`上次修改时间：${new Date(cell.lastModified ?? 0).toLocaleString('zh-CN')}`}>
+                    {timeText}
+                  </div>
+                )}
                 {!settings.locked && column < columns - 1 && <button className="resize-handle col-resize" title="拖动调整列宽" aria-label="拖动调整列宽" onPointerDown={(event) => resizeStart('columns', column, event)} />}
                 {!settings.locked && row < rows - 1 && <button className="resize-handle row-resize" title="拖动调整行高" aria-label="拖动调整行高" onPointerDown={(event) => resizeStart('rows', row, event)} />}
               </article>
@@ -493,7 +532,7 @@ function App() {
             <span className="floating-value">{{ small: '小', medium: '中', large: '大' }[selectedFormat.fontSize]}</span>
             <select className="select-hit-area" aria-label="选中文字字号" value={selectedFormat.fontSize} onChange={(event) => {
               const size = event.target.value as AppSettings['fontSize'];
-              const pixels = size === 'small' ? 15 : size === 'large' ? 22 : 18;
+              const pixels = FONT_SIZES[size];
               setSelectedFormat((current) => ({ ...current, fontSize: size }));
               applyInlineFormat('fontSize', `${pixels}px`);
             }}>

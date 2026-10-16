@@ -85,6 +85,7 @@ function createWindow(): void {
     },
   });
 
+  mainWindow.maximize();
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url === 'https://github.com/RobertLau2480/SchoolworkOnScreen') void shell.openExternal(url);

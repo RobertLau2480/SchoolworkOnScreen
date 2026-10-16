@@ -69,15 +69,21 @@ button { color: inherit; }
   box-shadow: 0 1px 3px rgba(28, 47, 54, .08);
 }
 .cell-heading {
-  min-height: 34px; display: flex; align-items: center; gap: 9px; padding: 0 11px;
+  min-height: 46px; display: flex; align-items: center; gap: 9px; padding: 0 11px;
   border-bottom: 1px solid rgba(70, 91, 96, .11);
 }
 .cell-index { color: #8ca0a2; font: 500 10px Consolas, monospace; }
 .cell-heading input {
   width: min(56%, 180px); min-width: 50px; padding: 4px 0;
   border: 0; outline: 0; background: transparent; color: #446064;
-  font-size: 12px; font-weight: 700;
+  font-size: 22px; font-weight: 700;
 }
+.cell-modified-time {
+  position: absolute; top: 4px; right: 8px;
+  color: #88979a; font-size: 11px; font-weight: 400;
+  pointer-events: none; user-select: none; z-index: 3;
+}
+.cell-modified-time.stale { color: #e6c84f; }
 .cell-heading input:focus { box-shadow: inset 0 -1px #188f89; }
 .cell-grip { margin-left: auto; color: #b7c1c2; opacity: .5; font-size: 14px; }
 .cell-editor {
@@ -175,8 +181,8 @@ button { color: inherit; }
   .layout-select { width: 72px; }
   .surface-color { width: 51px; }
   .export-button { padding: 0 9px; }
-  .cell-heading { min-height: 30px; padding: 0 7px; gap: 5px; }
-  .cell-heading input { font-size: 11px; }
+  .cell-heading { min-height: 40px; padding: 0 7px; gap: 5px; }
+  .cell-heading input { font-size: 16px; }
   .cell-editor { padding: 9px; }
 }
 
@@ -283,11 +289,12 @@ button { color: inherit; }
     background: #202b31;
     border: 1px solid #526168;
     box-shadow: 0 8px 28px rgba(0, 0, 0, .48);
-    transform: translate(-50%, -100%);
+    transform: translate(-50%, 0);
     animation: toolbar-enter .12s ease-out;
     user-select: none;
   }
   .selection-toolbar.below { transform: translate(-50%, 0); }
+  .selection-toolbar.above { transform: translate(-50%, -100%); }
   .floating-select {
     position: relative;
     display: flex;
@@ -377,8 +384,8 @@ button { color: inherit; }
     .highlight-toggle, .floating-format { height: 28px; width: 26px; }
   }
 
-.cell-heading { min-height: 42px; gap: 10px; padding: 0 12px; }
-.cell-heading input { font-size: 17px; }
+.cell-heading { min-height: 50px; gap: 10px; padding: 0 12px; }
+.cell-heading input { font-size: 20px; }
 .cell-index { font-size: 11px; }
 .selection-toolbar {
   width: max-content;
@@ -528,8 +535,8 @@ button { color: inherit; }
   .controlbar { min-height: 54px; padding: 4px 6px; }
   .controlbar .table-tools { gap: 4px; }
   .controlbar .about-button { min-width: 48px; padding: 0 7px; }
-  .cell-heading { min-height: 38px; padding: 0 8px; }
-  .cell-heading input { font-size: 15px; }
+  .cell-heading { min-height: 46px; padding: 0 8px; }
+  .cell-heading input { font-size: 18px; }
 }
 
 .brand-icon {
