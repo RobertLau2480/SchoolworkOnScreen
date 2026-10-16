@@ -33,8 +33,8 @@ const THEME_SURFACES: Record<Theme, { background: string; frame: string; textCol
 // 高光颜色：深色模式保留原色，浅色模式使用很亮的黄色
 const HIGHLIGHT_COLORS: Record<Theme, string> = { dark: '#b85c1e', light: '#fff176' };
 const LEGACY_HIGHLIGHT_COLORS = ['#087f80', '#58d9e6'];
-const VERSION = '1.1.0';
-const BUILD_DATE = '2026年10月16日';
+const VERSION = '1.1.1';
+const BUILD_DATE = '2026年10月17日';
 
 const defaultSettings: AppSettings = {
   background: THEME_SURFACES.dark.background,
@@ -349,20 +349,29 @@ function App() {
     updateCell(index, { lastModified: Date.now() });
   };
 
+  // 仅在内容真正变化时才写入文本并刷新“修改时间”，避免光标进入/离开即计时
   const queueContentUpdate = (index: number, editor: HTMLElement, immediate = false) => {
     const pending = inputTimersRef.current.get(index);
     if (pending) window.clearTimeout(pending);
-    if (immediate) {
+    const apply = () => {
       inputTimersRef.current.delete(index);
-      updateCell(index, { text: editor.innerHTML });
-      markCellModified(index);
+      const html = editor.innerHTML;
+      setDocument((current) => {
+        const cell = current.cells[index];
+        if (!cell || cell.text === html) return current;
+        return {
+          ...current,
+          cells: current.cells.map((item, cellIndex) => cellIndex === index
+            ? { ...item, text: html, lastModified: Date.now() }
+            : item),
+        };
+      });
+    };
+    if (immediate) {
+      apply();
       return;
     }
-    inputTimersRef.current.set(index, window.setTimeout(() => {
-      inputTimersRef.current.delete(index);
-      updateCell(index, { text: editor.innerHTML });
-      markCellModified(index);
-    }, 120));
+    inputTimersRef.current.set(index, window.setTimeout(apply, 120));
   };
 
   const updateSettings = (patch: Partial<AppSettings>) => setSettings((current) => ({ ...current, ...patch }));
