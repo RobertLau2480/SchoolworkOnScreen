@@ -1,5 +1,6 @@
-// 从项目根目录 fonts-woff2/ 文件夹加载字体（WOFF2 压缩版，体积更小），
-// 并注册到浏览器 FontFace。使用 Vite 的 `?url` 后缀导入，让字体作为静态资源复制到产物目录。
+// 从项目根目录 fonts-woff2/ 文件夹加载字体（WOFF2 压缩版），并注册到浏览器。
+// 采用注入 @font-face 样式表的方式（而非 FontFace API），这样 html-to-image
+// 在导出 PNG 时能够读取 document.styleSheets 中的 @font-face 规则并内嵌字体数据。
 // 列表内显示文件名（去掉后缀）。
 import fangSongUrl from '../fonts-woff2/仿宋.woff2?url';
 import huaWenZhongSongUrl from '../fonts-woff2/华文中宋.woff2?url';
@@ -18,48 +19,58 @@ export interface FontOption {
   family: string;
   /** 列表展示用的名称（文件名去掉后缀） */
   label: string;
+  /** 字体资源的 URL（构建后为产物路径） */
+  url: string;
 }
 
-const rawFonts: { label: string; url: string; format: string }[] = [
-  { label: '仿宋', url: fangSongUrl, format: 'woff2' },
-  { label: '华文中宋', url: huaWenZhongSongUrl, format: 'woff2' },
-  { label: '华文新魏', url: huaWenXinWeiUrl, format: 'woff2' },
-  { label: '幼圆', url: youYuanUrl, format: 'woff2' },
-  { label: '思源宋体', url: siYuanSongTiUrl, format: 'woff2' },
-  { label: '思源黑体', url: siYuanHeiTiUrl, format: 'woff2' },
-  { label: '方正姚体', url: fangZhengYaoTiUrl, format: 'woff2' },
-  { label: '方正舒体', url: fangZhengShuTiUrl, format: 'woff2' },
-  { label: '楷体', url: kaiTiUrl, format: 'woff2' },
-  { label: '汉仪乐喵体', url: hanYiLeMiaoTiUrl, format: 'woff2' },
-  { label: '隶书', url: liShuUrl, format: 'woff2' },
+const rawFonts: { label: string; url: string }[] = [
+  { label: '仿宋', url: fangSongUrl },
+  { label: '华文中宋', url: huaWenZhongSongUrl },
+  { label: '华文新魏', url: huaWenXinWeiUrl },
+  { label: '幼圆', url: youYuanUrl },
+  { label: '思源宋体', url: siYuanSongTiUrl },
+  { label: '思源黑体', url: siYuanHeiTiUrl },
+  { label: '方正姚体', url: fangZhengYaoTiUrl },
+  { label: '方正舒体', url: fangZhengShuTiUrl },
+  { label: '楷体', url: kaiTiUrl },
+  { label: '汉仪乐喵体', url: hanYiLeMiaoTiUrl },
+  { label: '隶书', url: liShuUrl },
 ];
 
 /** 字体族名加前缀，避免与系统同名字体冲突。 */
 const FAMILY_PREFIX = 'SWOS-';
 
-export const fontOptions: FontOption[] = rawFonts.map(({ label }) => ({
+export const fontOptions: FontOption[] = rawFonts.map(({ label, url }) => ({
   family: `${FAMILY_PREFIX}${label}`,
   label,
+  url,
 }));
 
 /** 默认字体：思源黑体。 */
 export const DEFAULT_FONT_FAMILY = fontOptions.find((option) => option.label === '思源黑体')?.family ?? fontOptions[0].family;
 
-let loaded = false;
+let injected = false;
 
-/** 将所有本地字体注册为 FontFace（只执行一次）。 */
-export async function loadLocalFonts(): Promise<void> {
-  if (loaded) return;
-  loaded = true;
-  await Promise.all(rawFonts.map(async ({ label, url, format }) => {
-    try {
-      const face = new FontFace(`${FAMILY_PREFIX}${label}`, `url(${url}) format('${format}')`);
-      await face.load();
-      window.document.fonts.add(face);
-    } catch (error) {
-      console.error(`字体加载失败：${label}`, error);
-    }
-  }));
+/** 注入 @font-face 样式表（只执行一次）。html-to-image 依赖此规则内嵌字体。 */
+export function loadLocalFonts(): void {
+  if (injected) return;
+  injected = true;
+  const style = window.document.createElement('style');
+  style.id = 'swos-font-faces';
+  style.textContent = fontOptions
+    .map(({ family, url }) => `@font-face{font-family:"${family}";src:url("${url}") format("woff2");font-weight:normal;font-style:normal;font-display:block;}`)
+    .join('\n');
+  window.document.head.appendChild(style);
+  // 预热加载，避免首次切换字体时出现短暂回退。
+  void window.document.fonts.ready;
+}
+
+/** 生成仅包含指定字体族的 @font-face CSS，供 html-to-image 内嵌使用。 */
+export function buildFontEmbedCSS(families: Set<string>): string {
+  return fontOptions
+    .filter((option) => families.has(option.family))
+    .map(({ family, url }) => `@font-face{font-family:"${family}";src:url("${url}") format("woff2");font-weight:normal;font-style:normal;}`)
+    .join('\n');
 }
 
 /** 判断某个 font-family 是否属于本地字体。 */

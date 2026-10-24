@@ -13,6 +13,7 @@
   --coral: #e27d66;
   --bar-height: 94px;
   --title-height: 66px;
+  --grid-gap: 6px;
 }
 
 * { box-sizing: border-box; }
@@ -58,7 +59,7 @@ button { color: inherit; }
 .work-area { flex: 1; min-height: 0; padding: 11px 12px 8px; overflow: hidden; }
 .homework-grid {
   width: 100%; height: 100%; min-height: 0;
-  display: grid; gap: 6px; padding: 6px;
+  display: grid; gap: var(--grid-gap); padding: 6px;
   border: 1px solid rgba(54, 74, 81, .18);
   background-color: var(--app-bg);
   transition: background-color .18s ease;
@@ -90,11 +91,32 @@ button { color: inherit; }
 }
 .cell-editor:empty::before { content: attr(data-placeholder); color: #aab5b7; pointer-events: none; }
 .cell-editor:focus { box-shadow: inset 0 0 0 2px rgba(24, 143, 137, .18); }
-.is-unlocked .homework-cell { outline: 1px dashed rgba(24, 143, 137, .24); }
-.resize-handle { position: absolute; z-index: 2; border: 0; padding: 0; background: transparent; touch-action: none; }
-.col-resize { top: 0; right: -4px; width: 9px; height: 100%; cursor: col-resize; }
-.row-resize { left: 0; bottom: -4px; width: 100%; height: 9px; cursor: row-resize; }
-.resize-handle:hover { background: rgba(24, 143, 137, .24); }
+.is-unlocked .homework-cell {
+  outline: 1px dashed rgba(24, 143, 137, .24);
+  overflow: visible;
+}
+.resize-handle {
+  position: absolute; z-index: 3; border: 0; padding: 0; background: transparent; touch-action: none;
+}
+/* 手柄中心对准格间空隙的正中央 */
+.col-resize {
+  top: 0; left: 100%; width: 14px; height: 100%;
+  margin-left: calc(var(--grid-gap, 6px) / 2); transform: translateX(-50%);
+  cursor: col-resize;
+}
+.row-resize {
+  left: 0; top: 100%; width: 100%; height: 14px;
+  margin-top: calc(var(--grid-gap, 6px) / 2); transform: translateY(-50%);
+  cursor: row-resize;
+}
+.col-resize::after, .row-resize::after {
+  content: ''; position: absolute; opacity: 0; transition: opacity .12s ease;
+  background: rgba(69, 183, 176, .6);
+}
+.col-resize::after { left: 6px; top: 0; width: 2px; height: 100%; }
+.row-resize::after { top: 6px; left: 0; height: 2px; width: 100%; }
+.resize-handle:hover::after, .resize-handle:focus-visible::after { opacity: 1; }
+.resize-handle:hover { background: transparent; }
 
 .controlbar {
   min-height: var(--bar-height); padding: 11px 15px 12px;
@@ -170,7 +192,8 @@ button { color: inherit; }
 @media (max-width: 620px) {
   :root { --bar-height: 150px; --title-height: 58px; }
   .work-area { padding: 6px; }
-  .homework-grid { gap: 4px; padding: 4px; }
+  :root { --grid-gap: 4px; }
+  .homework-grid { padding: 4px; }
   .controlbar { padding: 7px 6px; }
   .format-tools, .table-tools { gap: 4px; }
   .font-select { width: 100px; }
@@ -206,7 +229,6 @@ button { color: inherit; }
   .cell-editor:focus { box-shadow: inset 0 0 0 2px rgba(69, 183, 176, .26); }
   .cell-editor { overflow: hidden; }
   .is-unlocked .homework-cell { outline-color: rgba(69, 183, 176, .34); }
-  .resize-handle:hover { background: rgba(69, 183, 176, .3); }
 
   .controlbar {
     color: #dce6e8;
@@ -649,7 +671,7 @@ button { color: inherit; }
 }
 
 /* ===== 浅色模式 ===== */
-[data-theme='light'] { color: #1c2622; background: #eef1ee; }
+[data-theme='light'] { color: #1c2622; background: #eef1ee; color-scheme: light; }
 [data-theme='light'].app-shell { color: #1c2622; background: var(--app-bg); }
 [data-theme='light'] .titlebar { color: #eef2f1; background: #2f4a45; border-bottom: 1px solid #263b37; }
 [data-theme='light'] .brand-name { color: #f2f7f5; }
@@ -668,7 +690,8 @@ button { color: inherit; }
 [data-theme='light'] .cell-editor:empty::before { color: #9aaba4; }
 [data-theme='light'] .cell-editor:focus { box-shadow: inset 0 0 0 2px rgba(24, 143, 137, .28); }
 [data-theme='light'] .is-unlocked .homework-cell { outline-color: rgba(24, 143, 137, .3); }
-[data-theme='light'] .resize-handle:hover { background: rgba(24, 143, 137, .24); }
+[data-theme='light'] .col-resize::after,
+[data-theme='light'] .row-resize::after { background: rgba(24, 143, 137, .65); }
 [data-theme='light'] .controlbar {
   color: #24322d;
   background: #f7faf8;

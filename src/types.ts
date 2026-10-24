@@ -39,6 +39,8 @@ declare global {
       close: () => Promise<void>;
       isMaximized: () => Promise<boolean>;
       confirmLayout: (message: string) => Promise<boolean>;
+      fontDataUrls: (urls: string[]) => Promise<Record<string, string>>;
+      setNativeTheme: (theme: string) => Promise<void>;
     };
   }
 }

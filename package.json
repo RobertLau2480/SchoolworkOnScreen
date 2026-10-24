@@ -1,6 +1,6 @@
 {
   "name": "schoolwork-on-screen",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "private": false,
   "description": "屏上作业 - A touch-friendly homework display for Windows",
   "main": "dist-electron/main.js",
@@ -53,10 +53,12 @@
       }
     ],
     "win": {
-      "target": ["portable"],
+      "target": [
+        "portable"
+      ],
       "icon": "icon-256.png",
       "executableName": "SchoolworkOnScreen",
-        "artifactName": "${productName}-${version}-loading-about-portable.${ext}"
+      "artifactName": "${productName}-${version}-loading-about-portable.${ext}"
     }
   }
 }

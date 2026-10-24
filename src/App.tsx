@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import appIcon from '../icon.png';
-import { DEFAULT_FONT_FAMILY, fontOptions, loadLocalFonts } from './fonts';
+import { DEFAULT_FONT_FAMILY, buildFontEmbedCSS, fontOptions, loadLocalFonts } from './fonts';
 import type { AppSettings, HomeworkCell, HomeworkDocument, Layout, Theme } from './types';
 
 /** 由 font-family 取列表展示名（去掉前缀）。 */
@@ -33,8 +33,8 @@ const THEME_SURFACES: Record<Theme, { background: string; frame: string; textCol
 // 高光颜色：深色模式保留原色，浅色模式使用很亮的黄色
 const HIGHLIGHT_COLORS: Record<Theme, string> = { dark: '#b85c1e', light: '#fff176' };
 const LEGACY_HIGHLIGHT_COLORS = ['#087f80', '#58d9e6'];
-const VERSION = '1.1.1';
-const BUILD_DATE = '2026年10月17日';
+const VERSION = '1.1.2';
+const BUILD_DATE = '2026年10月24日';
 
 const defaultSettings: AppSettings = {
   background: THEME_SURFACES.dark.background,
@@ -143,46 +143,19 @@ function remapHighlightColors(html: string, mapping: Record<string, string>): st
   return changed ? container.innerHTML : html;
 }
 
-/** 以文本字符偏移量保存选区，用于 DOM 变更后恢复。 */
-function saveSelectionOffsets(editor: HTMLElement, range: Range): { start: number; end: number } {
-  const pre = window.document.createRange();
-  pre.selectNodeContents(editor);
-  pre.setEnd(range.startContainer, range.startOffset);
-  const start = pre.toString().length;
-  return { start, end: start + range.toString().length };
-}
-
-/** 按文本字符偏移量恢复选区。 */
-function restoreSelectionOffsets(editor: HTMLElement, start: number, end: number): Range {
-  const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
-  let count = 0;
-  let startNode: Node = editor;
-  let endNode: Node = editor;
-  let startOffset = 0;
-  let endOffset = 0;
-  let node = walker.nextNode();
-  while (node) {
-    const length: number = (node as Text).length;
-    if (startNode === editor && count + length >= start) {
-      startNode = node;
-      startOffset = start - count;
-    }
-    if (endNode === editor && count + length >= end) {
-      endNode = node;
-      endOffset = end - count;
-      break;
-    }
-    count += length;
-    node = walker.nextNode();
-  }
-  const range = window.document.createRange();
-  try {
-    range.setStart(startNode, Math.max(0, startOffset));
-    range.setEnd(endNode, Math.max(0, endOffset));
-  } catch {
-    range.selectNodeContents(editor);
-  }
-  return range;
+/**
+ * 清除选区内元素上的同名内联样式。
+ * 这样「给已高光/已改色的文字重新设置样式」时才能真正覆盖旧值，
+ * 同时其它未涉及的样式（如高光、字号）仍会保留。
+ */
+function clearInlineProperty(editor: HTMLElement, range: Range, property: string): void {
+  editor.querySelectorAll<HTMLElement>('[style]').forEach((element) => {
+    const style = element.style as unknown as Record<string, string>;
+    if (!style[property]) return;
+    if (!range.intersectsNode(element)) return;
+    style[property] = '';
+    if (!element.getAttribute('style')) element.removeAttribute('style');
+  });
 }
 
 function emptyDocument(layout: Layout): HomeworkDocument {
@@ -247,7 +220,7 @@ function App() {
   const resizeRef = useRef<{ axis: 'columns' | 'rows'; index: number; start: number; values: number[] } | null>(null);
 
   useEffect(() => {
-    void loadLocalFonts();
+    loadLocalFonts();
     let alive = true;
     void window.schoolwork.load().then(({ content, settings: savedSettings }) => {
       if (!alive) return;
@@ -292,6 +265,11 @@ function App() {
     const timer = window.setTimeout(() => { void window.schoolwork.saveSettings(serializable); }, 180);
     return () => window.clearTimeout(timer);
   }, [settings, loaded]);
+
+  // 原生右键菜单（复制/剪切/粘贴）由系统绘制，需同步 nativeTheme 才能避免白底白字
+  useEffect(() => {
+    void window.schoolwork.setNativeTheme(settings.theme);
+  }, [settings.theme]);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -501,6 +479,16 @@ function App() {
     }
   }, [toolbarPosition, toolbarVisible, selectedFormat]);
 
+  /** 恢复保存的选区到编辑器，供 execCommand 使用。 */
+  const restoreSavedSelection = (editor: HTMLElement, savedRange: Range): boolean => {
+    const selection = window.getSelection();
+    if (!selection) return false;
+    editor.focus();
+    selection.removeAllRanges();
+    selection.addRange(savedRange);
+    return true;
+  };
+
   const applyInlineFormat = (property: 'fontFamily' | 'fontSize' | 'color' | 'backgroundColor' | 'fontWeight', value: string) => {
     const savedRange = selectionRef.current;
     const selection = window.getSelection();
@@ -509,27 +497,37 @@ function App() {
     const editor = (node.nodeType === Node.ELEMENT_NODE ? node as HTMLElement : node.parentElement)?.closest<HTMLElement>('.cell-editor');
     if (!editor) return;
 
-    let range = savedRange.cloneRange();
-
-    // 应用字号前，先展开（unwrap）选区内已有的字号 span，避免嵌套导致 em 比例相乘
-    if (property === 'fontSize') {
-      const offsets = saveSelectionOffsets(editor, range);
-      editor.querySelectorAll<HTMLElement>('span').forEach((span) => {
-        if (!span.style.fontSize) return;
-        if (!range.intersectsNode(span)) return;
-        const parent = span.parentNode;
-        if (!parent) return;
-        while (span.firstChild) parent.insertBefore(span.firstChild, span);
-        parent.removeChild(span);
-      });
-      range = restoreSelectionOffsets(editor, offsets.start, offsets.end);
+    // 颜色 / 高光 / 粗体交给 execCommand 处理：浏览器会自动拆分嵌套的行内标签，
+    // 因此可以覆盖选区内已有的同类样式（这正是之前无法覆盖旧高光的原因）。
+    if (property === 'color' || property === 'backgroundColor' || property === 'fontWeight') {
+      if (!restoreSavedSelection(editor, savedRange)) return;
+      window.document.execCommand('styleWithCSS', false, 'true');
+      if (property === 'color') window.document.execCommand('foreColor', false, value);
+      else if (property === 'backgroundColor') {
+        // 'transparent' 表示取消高光，露出单元格背景色
+        window.document.execCommand('hiliteColor', false, value === 'var(--cell-bg)' ? 'transparent' : value);
+      } else {
+        window.document.execCommand('bold');
+      }
+      const currentSelection = window.getSelection();
+      if (currentSelection?.rangeCount) selectionRef.current = currentSelection.getRangeAt(0).cloneRange();
+      const cellIndex = Number(editor.dataset.cellIndex);
+      updateCell(cellIndex, { text: editor.innerHTML });
+      markCellModified(cellIndex);
+      readSelectionFormat();
+      return;
     }
+
+    const range = savedRange.cloneRange();
+    // 字体 / 字号：清除选区内同名旧值后重新包裹，避免嵌套造成样式叠加
+    clearInlineProperty(editor, range, property);
 
     const collapsed = range.collapsed;
     const span = window.document.createElement('span');
     if (property === 'fontSize') {
       const baseSize = getBaseFontSize();
-      span.style.fontSize = `${Number.parseFloat(value) / baseSize}em`;
+      const editorSize = Number.parseFloat(window.getComputedStyle(editor).fontSize) || baseSize;
+      span.style.fontSize = `${Number.parseFloat(value) / editorSize}em`;
     } else {
       span.style[property] = value;
     }
@@ -612,7 +610,26 @@ function App() {
     setExporting(true);
     try {
       const { toPng } = await import('html-to-image');
-      const dataUrl = await toPng(gridRef.current, { pixelRatio: 2, backgroundColor: settings.background });
+      // 收集用到的字体族，交给主进程读成 data URL 内嵌；否则 file:// 下字体加载失败会回退到微软雅黑
+      const used = new Set<string>([settings.font]);
+      gridRef.current.querySelectorAll<HTMLElement>('[style*="font-family"]').forEach((element) => {
+        const matched = fontOptions.find((option) => element.style.fontFamily.includes(option.family));
+        if (matched) used.add(matched.family);
+      });
+      let fontEmbedCSS = '';
+      try {
+        const dataUrls = await window.schoolwork.fontDataUrls(fontOptions.map((option) => option.url));
+        fontEmbedCSS = buildFontEmbedCSS(used).replace(/url\("([^"]+)"\)/g, (match, url: string) => (
+          dataUrls[url] ? `url("${dataUrls[url]}")` : match
+        ));
+      } catch (error) {
+        console.error('Font embedding failed', error);
+      }
+      const dataUrl = await toPng(gridRef.current, {
+        pixelRatio: 2,
+        backgroundColor: settings.background,
+        ...(fontEmbedCSS ? { fontEmbedCSS } : {}),
+      });
       const anchor = window.document.createElement('a');
       anchor.download = `屏上作业-${new Date().toISOString().slice(0, 10)}.png`;
       anchor.href = dataUrl;

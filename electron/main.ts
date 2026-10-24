@@ -1,10 +1,41 @@
-import { app, BrowserWindow, ipcMain, powerSaveBlocker, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeTheme, powerSaveBlocker, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
 let mainWindow: BrowserWindow | null = null;
 let blockerId: number | null = null;
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
+/** 字体文件 base64 缓存，避免重复读取。 */
+const fontDataUrlCache = new Map<string, string>();
+
+/** 将渲染进程给出的字体 URL 解析为磁盘路径。 */
+function resolveFontPath(url: string): string | null {
+  const clean = decodeURIComponent(url.split('?')[0].split('#')[0]);
+  if (!clean) return null;
+  const rendererRoot = app.isPackaged ? path.join(__dirname, '../renderer') : app.getAppPath();
+  const candidates = [
+    path.isAbsolute(clean) ? clean : path.join(rendererRoot, clean.replace(/^\.\//, '')),
+    path.join(app.getAppPath(), clean.replace(/^\//, '')),
+    path.join(app.getAppPath(), 'fonts-woff2', path.basename(clean)),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+}
+
+/** 把字体文件读成 data URL，供导出 PNG 时内嵌（避免 file:// 无法 fetch）。 */
+function fontDataUrl(url: string): string | null {
+  const cached = fontDataUrlCache.get(url);
+  if (cached) return cached;
+  const file = resolveFontPath(url);
+  if (!file) return null;
+  const extension = path.extname(file).toLowerCase();
+  const mime = extension === '.woff2' ? 'font/woff2'
+    : extension === '.woff' ? 'font/woff'
+      : extension === '.ttf' || extension === '.ttc' ? 'font/ttf'
+        : 'font/otf';
+  const dataUrl = `data:${mime};base64,${fs.readFileSync(file).toString('base64')}`;
+  fontDataUrlCache.set(url, dataUrl);
+  return dataUrl;
+}
 
 function dataDirectory(): string {
   if (!app.isPackaged) return app.getAppPath();
@@ -117,6 +148,19 @@ ipcMain.handle('window:toggle-maximize', () => {
 });
 ipcMain.handle('window:close', () => mainWindow?.close());
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
+// 导出 PNG 时把字体转成 data URL 内嵌，避免 file:// 协议无法 fetch 导致字体丢失。
+ipcMain.handle('fonts:data-urls', (_event, urls: string[]) => {
+  const result: Record<string, string> = {};
+  urls.forEach((url) => {
+    const dataUrl = fontDataUrl(url);
+    if (dataUrl) result[url] = dataUrl;
+  });
+  return result;
+});
+// 让系统原生菜单（复制/剪切/粘贴）跟随应用主题，避免白底白字。
+ipcMain.handle('theme:set', (_event, theme: string) => {
+  nativeTheme.themeSource = theme === 'light' ? 'light' : 'dark';
+});
 ipcMain.handle('dialog:confirm-layout', async (_event, message: string) => {
   const { dialog } = await import('electron');
   const result = await dialog.showMessageBox(mainWindow!, {

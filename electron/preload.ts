@@ -9,4 +9,6 @@ contextBridge.exposeInMainWorld('schoolwork', {
   close: () => ipcRenderer.invoke('window:close'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
   confirmLayout: (message: string) => ipcRenderer.invoke('dialog:confirm-layout', message),
+  fontDataUrls: (urls: string[]) => ipcRenderer.invoke('fonts:data-urls', urls),
+  setNativeTheme: (theme: string) => ipcRenderer.invoke('theme:set', theme),
 });
