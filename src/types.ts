@@ -41,6 +41,7 @@ declare global {
       confirmLayout: (message: string) => Promise<boolean>;
       fontDataUrls: (urls: string[]) => Promise<Record<string, string>>;
       setNativeTheme: (theme: string) => Promise<void>;
+      saveHistory: (payload: { date: string; html: string; enabled: boolean }) => Promise<boolean>;
     };
   }
 }

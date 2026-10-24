@@ -161,6 +161,24 @@ ipcMain.handle('fonts:data-urls', (_event, urls: string[]) => {
 ipcMain.handle('theme:set', (_event, theme: string) => {
   nativeTheme.themeSource = theme === 'light' ? 'light' : 'dark';
 });
+// 历史记录：按天把当天最后一次编辑的内容以极简 HTML 保存到 history/ 目录。
+ipcMain.handle('history:save', (_event, payload: { date: string; html: string; enabled: boolean }) => {
+  const directory = path.join(dataDirectory(), 'history');
+  const target = path.join(directory, `${payload.date}.html`);
+  try {
+    if (!payload.enabled) {
+      // 关闭记录时清除当天快照，避免残留误导
+      if (fs.existsSync(target)) fs.unlinkSync(target);
+      return true;
+    }
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(target, payload.html, 'utf8');
+    return true;
+  } catch (error) {
+    console.error('history save failed', error);
+    return false;
+  }
+});
 ipcMain.handle('dialog:confirm-layout', async (_event, message: string) => {
   const { dialog } = await import('electron');
   const result = await dialog.showMessageBox(mainWindow!, {

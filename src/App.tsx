@@ -21,7 +21,8 @@ const subjects = ['语文', '数学', '英语', '物理', '化学', '生物', '�
 
 // 深色 / 浅色模式下的字体预设颜色（按顺序一一对应）
 const THEME_PALETTES: Record<Theme, string[]> = {
-  dark: ['#ffffff', '#ff5252', '#ffd83d', '#4d9fff', '#c77dff'],
+  // 深色模式的蓝色调浅，便于在深底上阅读
+  dark: ['#ffffff', '#ff5252', '#ffd83d', '#7cc0ff', '#c77dff'],
   light: ['#000000', '#c62828', '#b58900', '#1565c0', '#6a1b9a'],
 };
 // 每种模式对应的背景、表面与默认文字颜色
@@ -33,8 +34,9 @@ const THEME_SURFACES: Record<Theme, { background: string; frame: string; textCol
 // 高光颜色：深色模式保留原色，浅色模式使用很亮的黄色
 const HIGHLIGHT_COLORS: Record<Theme, string> = { dark: '#b85c1e', light: '#fff176' };
 const LEGACY_HIGHLIGHT_COLORS = ['#087f80', '#58d9e6'];
-const VERSION = '1.1.2';
-const BUILD_DATE = '2026年10月24日';
+const VERSION = '1.2.0';
+const BUILD_DATE = '2026年10月25日';
+const UNDO_LIMIT = 60;
 
 const defaultSettings: AppSettings = {
   background: THEME_SURFACES.dark.background,
@@ -70,7 +72,7 @@ function isTimeStale(timestamp: number | null | undefined, now: number): boolean
   return now - timestamp > 12 * 60 * 60 * 1000;
 }
 
-type SelectedFormat = Pick<AppSettings, 'font' | 'fontSize' | 'textColor' | 'bold' | 'highlight'> & { highlighted: boolean; fontStep: number };
+type SelectedFormat = Pick<AppSettings, 'font' | 'fontSize' | 'textColor' | 'bold' | 'highlight'> & { highlighted: boolean; italic: boolean; fontStep: number };
 
 function fitEditor(editor: HTMLElement, baseSize: number): void {
   const overflows = () => editor.scrollHeight > editor.clientHeight + 1 || editor.scrollWidth > editor.clientWidth + 1;
@@ -186,6 +188,34 @@ function parseSettings(raw: Record<string, string>): AppSettings {
   };
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .split('\u0026').join('\u0026amp;')
+    .split('\u003C').join('\u0026lt;')
+    .split('\u003E').join('\u0026gt;')
+    .split('\u0022').join('\u0026quot;');
+}
+
+/** 生成当天的历史记录 HTML：极简、内联样式，保留字体/颜色/粗斜体/高光。 */
+function buildHistoryHtml(doc: HomeworkDocument, theme: Theme): string {
+  const surfaces = THEME_SURFACES[theme];
+  const { columns } = layouts[doc.layout];
+  const cells = doc.cells.map((cell) => {
+    const subject = cell.subject ? `<div class="s">${escapeHtml(cell.subject)}</div>` : '';
+    return `<div class="c">${subject}<div class="t">${cell.text}</div></div>`;
+  }).join('');
+  return '<!doctype html><html><head><meta charset="utf-8">'
+    + `<title>屏上作业 ${doc.layout}</title>`
+    + '<style>'
+    + `body{margin:0;padding:14px;background:${surfaces.background};color:${surfaces.textColor};font-family:"Microsoft YaHei","SimHei",sans-serif;font-size:18px}`
+    + `.g{display:grid;grid-template-columns:repeat(${columns},1fr);gap:10px}`
+    + `.c{background:${surfaces.frame};border-radius:6px;padding:10px;min-height:90px}`
+    + '.s{font-weight:700;font-size:1.15em;margin-bottom:6px}'
+    + '.t{white-space:pre-wrap;word-break:break-word;line-height:1.5}'
+    + '</style></head><body>'
+    + `<div class="g">${cells}</div></body></html>`;
+}
+
 function clampTracks(tracks: number[], index: number, delta: number): number[] {
   const next = [...tracks];
   const total = next[index] + next[index + 1];
@@ -200,7 +230,7 @@ function App() {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [selectedFormat, setSelectedFormat] = useState<SelectedFormat>({
     font: defaultSettings.font, fontSize: defaultSettings.fontSize, textColor: defaultSettings.textColor,
-    bold: false, highlight: defaultSettings.highlight, highlighted: false, fontStep: 0,
+    bold: false, italic: false, highlight: defaultSettings.highlight, highlighted: false, fontStep: 0,
   });
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ left: 0, top: 0, side: 'below' as 'above' | 'below' });
@@ -209,6 +239,10 @@ function App() {
   const [maximized, setMaximized] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const [historyEnabled, setHistoryEnabled] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
   const gridRef = useRef<HTMLElement>(null);
   const formatToolbarRef = useRef<HTMLDivElement>(null);
   const selectionRectRef = useRef<{ left: number; top: number; right: number; bottom: number } | null>(null);
@@ -218,6 +252,38 @@ function App() {
   const fitFramesRef = useRef(new WeakMap<HTMLElement, number>());
   const inputTimersRef = useRef(new Map<number, number>());
   const resizeRef = useRef<{ axis: 'columns' | 'rows'; index: number; start: number; values: number[] } | null>(null);
+  const undoStackRef = useRef<HomeworkDocument[]>([]);
+  const redoStackRef = useRef<HomeworkDocument[]>([]);
+  const documentRef = useRef(document);
+  const historyTimerRef = useRef(0);
+  documentRef.current = document;
+
+  /** 记录一次快照用于撤销。 */
+  const pushUndo = () => {
+    undoStackRef.current.push(structuredClone(documentRef.current));
+    if (undoStackRef.current.length > UNDO_LIMIT) undoStackRef.current.shift();
+    redoStackRef.current = [];
+    setCanUndo(true);
+    setCanRedo(false);
+  };
+
+  const undo = () => {
+    const previous = undoStackRef.current.pop();
+    if (!previous) return;
+    redoStackRef.current.push(structuredClone(documentRef.current));
+    setDocument(previous);
+    setCanUndo(undoStackRef.current.length > 0);
+    setCanRedo(true);
+  };
+
+  const redo = () => {
+    const next = redoStackRef.current.pop();
+    if (!next) return;
+    undoStackRef.current.push(structuredClone(documentRef.current));
+    setDocument(next);
+    setCanUndo(true);
+    setCanRedo(redoStackRef.current.length > 0);
+  };
 
   useEffect(() => {
     loadLocalFonts();
@@ -236,11 +302,13 @@ function App() {
         fontSize: parsedSettings.fontSize,
         textColor: parsedSettings.textColor,
         bold: parsedSettings.bold,
+        italic: false,
         highlight: parsedSettings.highlight,
         highlighted: false,
         fontStep: 0,
       });
       fontStepRef.current = 0;
+      setHistoryEnabled(savedSettings.historyEnabled === 'true');
       setLoaded(true);
     }).catch(() => setLoaded(true));
     void window.schoolwork.isMaximized().then(setMaximized);
@@ -262,9 +330,24 @@ function App() {
   useEffect(() => {
     if (!loaded) return;
     const serializable = Object.fromEntries(Object.entries(settings).map(([key, value]) => [key, String(value)]));
-    const timer = window.setTimeout(() => { void window.schoolwork.saveSettings(serializable); }, 180);
+    const timer = window.setTimeout(() => {
+      void window.schoolwork.saveSettings({ ...serializable, historyEnabled: String(historyEnabled) });
+    }, 180);
     return () => window.clearTimeout(timer);
-  }, [settings, loaded]);
+  }, [settings, historyEnabled, loaded]);
+
+  // 历史记录：内容变动 1.5 秒后，把当天最终内容写入 history/YYYY-MM-DD.html
+  useEffect(() => {
+    if (!loaded) return;
+    window.clearTimeout(historyTimerRef.current);
+    historyTimerRef.current = window.setTimeout(() => {
+      const date = new Date();
+      const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+      const html = historyEnabled ? buildHistoryHtml(document, settings.theme) : '';
+      void window.schoolwork.saveHistory({ date: stamp, html, enabled: historyEnabled });
+    }, 1500);
+    return () => window.clearTimeout(historyTimerRef.current);
+  }, [document, settings.theme, historyEnabled, loaded]);
 
   // 原生右键菜单（复制/剪切/粘贴）由系统绘制，需同步 nativeTheme 才能避免白底白字
   useEffect(() => {
@@ -357,7 +440,10 @@ function App() {
   const changeLayout = async (layout: Layout) => {
     if (layout === document.layout) return;
     const confirmed = await window.schoolwork.confirmLayout(`确定切换到 ${layout} 表格吗？`);
-    if (confirmed) setDocument(emptyDocument(layout));
+    if (confirmed) {
+      pushUndo();
+      setDocument(emptyDocument(layout));
+    }
   };
 
   const resizeStart = (axis: 'columns' | 'rows', index: number, event: React.PointerEvent) => {
@@ -428,7 +514,8 @@ function App() {
       font: matched ? matched.family : settings.font,
       fontSize: size,
       textColor: cssColorToHex(computed.color),
-      bold: window.document.queryCommandState('bold'),
+      bold: Number.parseInt(computed.fontWeight, 10) >= 600,
+      italic: computed.fontStyle === 'italic' || computed.fontStyle.startsWith('oblique'),
       highlight,
       highlighted,
       fontStep,
@@ -489,7 +576,7 @@ function App() {
     return true;
   };
 
-  const applyInlineFormat = (property: 'fontFamily' | 'fontSize' | 'color' | 'backgroundColor' | 'fontWeight', value: string) => {
+  const applyInlineFormat = (property: 'fontFamily' | 'fontSize' | 'color' | 'backgroundColor' | 'fontWeight' | 'fontStyle', value: string) => {
     const savedRange = selectionRef.current;
     const selection = window.getSelection();
     if (!savedRange || !selection || !gridRef.current?.contains(savedRange.commonAncestorContainer)) return;
@@ -499,15 +586,17 @@ function App() {
 
     // 颜色 / 高光 / 粗体交给 execCommand 处理：浏览器会自动拆分嵌套的行内标签，
     // 因此可以覆盖选区内已有的同类样式（这正是之前无法覆盖旧高光的原因）。
-    if (property === 'color' || property === 'backgroundColor' || property === 'fontWeight') {
+    if (property === 'color' || property === 'backgroundColor' || property === 'fontWeight' || property === 'fontStyle') {
       if (!restoreSavedSelection(editor, savedRange)) return;
       window.document.execCommand('styleWithCSS', false, 'true');
       if (property === 'color') window.document.execCommand('foreColor', false, value);
       else if (property === 'backgroundColor') {
         // 'transparent' 表示取消高光，露出单元格背景色
         window.document.execCommand('hiliteColor', false, value === 'var(--cell-bg)' ? 'transparent' : value);
-      } else {
+      } else if (property === 'fontWeight') {
         window.document.execCommand('bold');
+      } else {
+        window.document.execCommand('italic');
       }
       const currentSelection = window.getSelection();
       if (currentSelection?.rangeCount) selectionRef.current = currentSelection.getRangeAt(0).cloneRange();
@@ -565,6 +654,10 @@ function App() {
     applyInlineFormat('fontWeight', selectedFormat.bold ? '400' : '700');
   };
 
+  const applyItalic = () => {
+    applyInlineFormat('fontStyle', selectedFormat.italic ? 'normal' : 'italic');
+  };
+
   const toggleHighlight = () => {
     // 优化高光：已高亮则取消（恢复单元格背景色），否则应用当前主题的高光色
     applyInlineFormat('backgroundColor', selectedFormat.highlighted ? 'var(--cell-bg)' : HIGHLIGHT_COLORS[settings.theme]);
@@ -605,6 +698,21 @@ function App() {
     }));
   };
 
+  /** 切换历史记录开关：开启时立即写入当天快照，关闭时删除当天文件。 */
+  const toggleHistory = async () => {
+    const next = !historyEnabled;
+    setHistoryBusy(true);
+    setHistoryEnabled(next);
+    const date = new Date();
+    const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    await window.schoolwork.saveHistory({
+      date: stamp,
+      html: next ? buildHistoryHtml(document, settings.theme) : '',
+      enabled: next,
+    });
+    setHistoryBusy(false);
+  };
+
   const exportImage = async () => {
     if (!gridRef.current) return;
     setExporting(true);
@@ -618,10 +726,7 @@ function App() {
       });
       let fontEmbedCSS = '';
       try {
-        const dataUrls = await window.schoolwork.fontDataUrls(fontOptions.map((option) => option.url));
-        fontEmbedCSS = buildFontEmbedCSS(used).replace(/url\("([^"]+)"\)/g, (match, url: string) => (
-          dataUrls[url] ? `url("${dataUrls[url]}")` : match
-        ));
+        fontEmbedCSS = await buildFontEmbedCSS(used);
       } catch (error) {
         console.error('Font embedding failed', error);
       }
@@ -629,6 +734,7 @@ function App() {
         pixelRatio: 2,
         backgroundColor: settings.background,
         ...(fontEmbedCSS ? { fontEmbedCSS } : {}),
+        cacheBust: true,
       });
       const anchor = window.document.createElement('a');
       anchor.download = `屏上作业-${new Date().toISOString().slice(0, 10)}.png`;
@@ -679,6 +785,7 @@ function App() {
               <article key={`${document.layout}-${index}`} className="homework-cell" style={{ backgroundColor: settings.frame }}>
                 <div className="cell-heading">
                   <input aria-label={`第${index + 1}格科目`} value={cell.subject} onChange={(event) => {
+                    pushUndo();
                     updateCell(index, { subject: event.target.value });
                     markCellModified(index);
                   }} placeholder="科目" />
@@ -761,6 +868,7 @@ function App() {
         </div>
         <div className="selection-toolbar-row style-controls-row">
           <button className={`floating-format ${selectedFormat.bold ? 'selected' : ''}`} aria-label="粗体" title="粗体" onMouseDown={(event) => event.preventDefault()} onClick={applyBold}><b>B</b></button>
+          <button className={`floating-format ${selectedFormat.italic ? 'selected' : ''}`} aria-label="斜体" title="斜体" onMouseDown={(event) => event.preventDefault()} onClick={applyItalic}><i>I</i></button>
           <div className="floating-colors" aria-label="预设字体颜色">
             {palette.map((color) => <button
               key={color}
@@ -792,6 +900,10 @@ function App() {
         <div className="controlbar-left">
           <button className="about-button" onClick={() => setAboutOpen(true)}>关于</button>
           <span className="version-tag">v{VERSION}</span>
+          <div className="edit-actions" role="group" aria-label="撤销与重做">
+            <button className="edit-btn" title="撤销 (Ctrl+Z)" aria-label="撤销" onClick={undo} disabled={!canUndo}>↶</button>
+            <button className="edit-btn" title="重做 (Ctrl+Y)" aria-label="重做" onClick={redo} disabled={!canRedo}>↷</button>
+          </div>
         </div>
         <div className="table-tools" aria-label="表格控制">
           <button className={`lock-button ${settings.locked ? 'locked' : ''}`} title={settings.locked ? '解锁表格尺寸' : '锁定表格尺寸'} onClick={() => updateSettings({ locked: !settings.locked })}>
@@ -808,6 +920,11 @@ function App() {
             <span className="theme-icon">{settings.theme === 'dark' ? '☾' : '☀'}</span>
             <span>{settings.theme === 'dark' ? '深色' : '浅色'}</span>
           </button>
+          <label className={`history-toggle ${historyEnabled ? 'on' : ''} ${historyBusy ? 'busy' : ''}`} title="按天保存当天最后一次编辑内容到 history/ 目录">
+            <input type="checkbox" checked={historyEnabled} onChange={() => void toggleHistory()} />
+            <span className="history-switch" aria-hidden="true"><span className="history-knob" /></span>
+            <span className="history-label">记录</span>
+          </label>
           <button className="export-button" title="导出 PNG 图片" onClick={() => void exportImage()} disabled={exporting}>
             <span aria-hidden="true">↧</span><span>{exporting ? '导出中' : '导出图片'}</span>
           </button>

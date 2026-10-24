@@ -11,4 +11,5 @@ contextBridge.exposeInMainWorld('schoolwork', {
   confirmLayout: (message: string) => ipcRenderer.invoke('dialog:confirm-layout', message),
   fontDataUrls: (urls: string[]) => ipcRenderer.invoke('fonts:data-urls', urls),
   setNativeTheme: (theme: string) => ipcRenderer.invoke('theme:set', theme),
+  saveHistory: (payload: { date: string; html: string; enabled: boolean }) => ipcRenderer.invoke('history:save', payload),
 });

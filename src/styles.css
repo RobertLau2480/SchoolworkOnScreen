@@ -3,7 +3,8 @@
   color: #dce6e8;
   color-scheme: dark;
   background: #11191e;
-  font-synthesis: none;
+  /* 本地字体只有常规字重/字形，必须允许浏览器合成粗体与斜体 */
+  font-synthesis: weight style;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   --ink: #dce6e8;
@@ -493,6 +494,29 @@ button { color: inherit; }
 .controlbar-left { display: flex; align-items: center; gap: 10px; margin-right: auto; }
 .controlbar-left .about-button { margin-right: 0; }
 .version-tag { color: #6f8079; font-size: 12px; letter-spacing: .3px; user-select: none; }
+.edit-actions { display: flex; align-items: center; gap: 4px; }
+.edit-btn {
+  width: 30px; height: 30px; display: grid; place-items: center;
+  border: 1px solid #3b4a51; background: #202b31; color: #dce6e8;
+  font-size: 15px; line-height: 1; cursor: pointer;
+}
+.edit-btn:hover:not(:disabled) { background: #2b3b42; border-color: #52656d; }
+.edit-btn:disabled { opacity: .32; cursor: not-allowed; }
+.history-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.history-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.history-switch {
+  position: relative; display: block; width: 34px; height: 19px;
+  border: 1px solid #3b4a51; background: #202b31; transition: background .16s ease, border-color .16s ease;
+}
+.history-knob {
+  position: absolute; top: 2px; left: 2px; width: 13px; height: 13px;
+  background: #7d8f95; transition: transform .16s ease, background .16s ease;
+}
+.history-toggle.on .history-switch { background: #168f89; border-color: #2aa8a1; }
+.history-toggle.on .history-knob { transform: translateX(15px); background: #f4ffff; }
+.history-toggle.busy { opacity: .6; pointer-events: none; }
+.history-label { color: #91a1a6; font-size: 11px; white-space: nowrap; }
+.history-toggle.on .history-label { color: #80d4cd; }
 .controlbar .table-tools { width: auto; flex: 0 0 auto; gap: 8px; }
 .controlbar .tool-select, .controlbar .color-tool { height: 40px; }
 .controlbar .selected-value { pointer-events: none; }
@@ -742,3 +766,11 @@ button { color: inherit; }
 [data-theme='light'] .about-details dt { color: #7d8d87; }
 [data-theme='light'] .about-details dd { color: #24322d; }
 [data-theme='light'] .version-tag { color: #7d8d87; }
+[data-theme='light'] .edit-btn { color: #33463f; background: #ffffff; border-color: #d5ded9; }
+[data-theme='light'] .edit-btn:hover:not(:disabled) { background: #eef4f1; border-color: #b9c8c2; }
+[data-theme='light'] .history-switch { background: #ffffff; border-color: #d5ded9; }
+[data-theme='light'] .history-knob { background: #9aa8a3; }
+[data-theme='light'] .history-toggle.on .history-switch { background: #16857f; border-color: #16857f; }
+[data-theme='light'] .history-toggle.on .history-knob { background: #ffffff; }
+[data-theme='light'] .history-label { color: #7d8d87; }
+[data-theme='light'] .history-toggle.on .history-label { color: #16857f; }

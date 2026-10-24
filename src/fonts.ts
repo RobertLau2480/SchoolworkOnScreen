@@ -1,18 +1,6 @@
-// 从项目根目录 fonts-woff2/ 文件夹加载字体（WOFF2 压缩版），并注册到浏览器。
-// 采用注入 @font-face 样式表的方式（而非 FontFace API），这样 html-to-image
-// 在导出 PNG 时能够读取 document.styleSheets 中的 @font-face 规则并内嵌字体数据。
-// 列表内显示文件名（去掉后缀）。
-import fangSongUrl from '../fonts-woff2/仿宋.woff2?url';
-import huaWenZhongSongUrl from '../fonts-woff2/华文中宋.woff2?url';
-import huaWenXinWeiUrl from '../fonts-woff2/华文新魏.woff2?url';
-import youYuanUrl from '../fonts-woff2/幼圆.woff2?url';
-import siYuanSongTiUrl from '../fonts-woff2/思源宋体.woff2?url';
-import siYuanHeiTiUrl from '../fonts-woff2/思源黑体.woff2?url';
-import fangZhengYaoTiUrl from '../fonts-woff2/方正姚体.woff2?url';
-import fangZhengShuTiUrl from '../fonts-woff2/方正舒体.woff2?url';
-import kaiTiUrl from '../fonts-woff2/楷体.woff2?url';
-import hanYiLeMiaoTiUrl from '../fonts-woff2/汉仪乐喵体.woff2?url';
-import liShuUrl from '../fonts-woff2/隶书.woff2?url';
+// 自动扫描 fonts-woff2/ 目录下的所有 .woff2 字体，无需手动逐个 import。
+// 新增字体时只需把 .woff2 放进该目录即可，列表会自动出现（显示文件名，去掉后缀）。
+// 字体通过注入 @font-face 规则加载，html-to-image 导出时可直接读取。
 
 export interface FontOption {
   /** 用于 CSS font-family 的字体族名 */
@@ -23,31 +11,34 @@ export interface FontOption {
   url: string;
 }
 
-const rawFonts: { label: string; url: string }[] = [
-  { label: '仿宋', url: fangSongUrl },
-  { label: '华文中宋', url: huaWenZhongSongUrl },
-  { label: '华文新魏', url: huaWenXinWeiUrl },
-  { label: '幼圆', url: youYuanUrl },
-  { label: '思源宋体', url: siYuanSongTiUrl },
-  { label: '思源黑体', url: siYuanHeiTiUrl },
-  { label: '方正姚体', url: fangZhengYaoTiUrl },
-  { label: '方正舒体', url: fangZhengShuTiUrl },
-  { label: '楷体', url: kaiTiUrl },
-  { label: '汉仪乐喵体', url: hanYiLeMiaoTiUrl },
-  { label: '隶书', url: liShuUrl },
-];
-
 /** 字体族名加前缀，避免与系统同名字体冲突。 */
 const FAMILY_PREFIX = 'SWOS-';
 
-export const fontOptions: FontOption[] = rawFonts.map(({ label, url }) => ({
-  family: `${FAMILY_PREFIX}${label}`,
-  label,
-  url,
-}));
+// eager + query:?url 确保构建时把字体作为静态资源输出并拿到最终 URL
+const modules = import.meta.glob('../fonts-woff2/*.woff2', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
 
-/** 默认字体：思源黑体。 */
-export const DEFAULT_FONT_FAMILY = fontOptions.find((option) => option.label === '思源黑体')?.family ?? fontOptions[0].family;
+/** 从路径中取出不带扩展名的文件名。 */
+function fileLabel(path: string): string {
+  const name = path.split('/').pop() ?? path;
+  return decodeURIComponent(name.replace(/\.woff2$/i, ''));
+}
+
+export const fontOptions: FontOption[] = Object.entries(modules)
+  .map(([path, url]) => {
+    const label = fileLabel(path);
+    return { family: `${FAMILY_PREFIX}${label}`, label, url };
+  })
+  .sort((a, b) => a.label.localeCompare(b.label, 'zh-Hans-CN'));
+
+/** 默认字体：思源黑体，缺失时回退到列表首项。 */
+export const DEFAULT_FONT_FAMILY =
+  fontOptions.find((option) => option.label === '思源黑体')?.family
+  ?? fontOptions[0]?.family
+  ?? `${FAMILY_PREFIX}SimSun`;
 
 let injected = false;
 
@@ -58,19 +49,53 @@ export function loadLocalFonts(): void {
   const style = window.document.createElement('style');
   style.id = 'swos-font-faces';
   style.textContent = fontOptions
-    .map(({ family, url }) => `@font-face{font-family:"${family}";src:url("${url}") format("woff2");font-weight:normal;font-style:normal;font-display:block;}`)
+    .map(({ family, url }) => `@font-face{font-family:"${family}";src:url("${url}") format("woff2");font-weight:100 900;font-style:normal;font-display:block;}`)
     .join('\n');
   window.document.head.appendChild(style);
-  // 预热加载，避免首次切换字体时出现短暂回退。
-  void window.document.fonts.ready;
 }
 
-/** 生成仅包含指定字体族的 @font-face CSS，供 html-to-image 内嵌使用。 */
-export function buildFontEmbedCSS(families: Set<string>): string {
-  return fontOptions
-    .filter((option) => families.has(option.family))
-    .map(({ family, url }) => `@font-face{font-family:"${family}";src:url("${url}") format("woff2");font-weight:normal;font-style:normal;}`)
-    .join('\n');
+// 字体二进制转 data URL 的缓存，避免导出图片时重复读取
+const dataUrlCache = new Map<string, Promise<string>>();
+
+/** 在渲染进程内把字体文件读成 base64 data URL（file:// 下也能工作）。 */
+function toDataUrl(url: string): Promise<string> {
+  const cached = dataUrlCache.get(url);
+  if (cached) return cached;
+  const task = (async () => {
+    // 打包后页面是 file:// 协议，Chromium 会拦截 fetch(file://)，因此优先走主进程读取
+    try {
+      const result = await window.schoolwork.fontDataUrls([url]);
+      if (result[url]) return result[url];
+    } catch {
+      /* 忽略，回退到 fetch */
+    }
+    const response = await fetch(url);
+    const buffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    // 分块拼接，避免超大字符串导致调用栈溢出
+    const chunk = 0x8000;
+    let binary = '';
+    for (let index = 0; index < bytes.length; index += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+    }
+    return `data:font/woff2;base64,${window.btoa(binary)}`;
+  })().catch(() => '');
+  dataUrlCache.set(url, task);
+  return task;
+}
+
+/**
+ * 生成用于 html-to-image 的 fontEmbedCSS。
+ * 只内嵌实际使用到的字体族，且 src 使用 base64 data URL，确保任何协议下都能渲染。
+ */
+export async function buildFontEmbedCSS(families: Set<string>): Promise<string> {
+  const targets = fontOptions.filter((option) => families.has(option.family));
+  const rules = await Promise.all(targets.map(async ({ family, url }) => {
+    const dataUrl = await toDataUrl(url);
+    if (!dataUrl) return '';
+    return `@font-face{font-family:"${family}";src:url("${dataUrl}") format("woff2");font-weight:100 900;font-style:normal;}`;
+  }));
+  return rules.filter(Boolean).join('\n');
 }
 
 /** 判断某个 font-family 是否属于本地字体。 */

@@ -1,6 +1,6 @@
 {
   "name": "schoolwork-on-screen",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "private": false,
   "description": "屏上作业 - A touch-friendly homework display for Windows",
   "main": "dist-electron/main.js",
