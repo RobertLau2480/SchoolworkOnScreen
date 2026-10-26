@@ -872,6 +872,77 @@ button { color: inherit; }
   border-color: #1a9d96;
 }
 
+/* 字号五档滑条 */
+.font-size-controls {
+  gap: 6px;
+  padding: 3px 10px;
+}
+.font-size-glyph {
+  color: #b8c9cd;
+  line-height: 1;
+  user-select: none;
+}
+.font-size-glyph.small { font-size: 10px; }
+.font-size-glyph.large { font-size: 16px; font-weight: 700; }
+.font-size-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 84px;
+  height: 4px;
+  margin: 0;
+  border-radius: 2px;
+  background: #3c4b52;
+  outline: none;
+  cursor: pointer;
+}
+.font-size-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #45b7b0;
+  border: 2px solid #1b262a;
+  cursor: pointer;
+}
+.font-size-slider::-webkit-slider-thumb:hover { background: #5ecdc6; }
+.font-size-slider::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #45b7b0;
+  border: 2px solid #1b262a;
+  cursor: pointer;
+}
+[data-theme='light'] .font-size-glyph { color: #5c6d67; }
+[data-theme='light'] .font-size-slider { background: #d5ded9; }
+[data-theme='light'] .font-size-slider::-webkit-slider-thumb { background: #16857f; border-color: #ffffff; }
+[data-theme='light'] .font-size-slider::-moz-range-thumb { background: #16857f; border-color: #ffffff; }
+
+/* 每日存档：开关 + 文件夹链接 */
+.history-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.history-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #6fa9a5;
+  font-size: 10px;
+  line-height: 1.2;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.history-link:hover { color: #8fd8d2; }
+[data-theme='light'] .history-link { color: #227c76; }
+[data-theme='light'] .history-link:hover { color: #16857f; }
+
+/* 撤销 / 重做按钮右移一点 */
+.edit-actions { margin-left: 8px; }
+
 /* 调色盘：原生取色器叠在色块上 */
 .floating-picker {
   position: relative;

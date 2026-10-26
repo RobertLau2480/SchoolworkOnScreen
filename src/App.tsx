@@ -25,18 +25,23 @@ const THEME_SURFACES: Record<Theme, { background: string; frame: string; textCol
 // 深色模式用深棕色高光（深底上更柔和），浅色模式用亮黄
 const HIGHLIGHT_COLORS: Record<Theme, string> = { dark: '#5a3a1e', light: '#fff176' };
 const LEGACY_HIGHLIGHT_COLORS = ['#087f80', '#58d9e6'];
-const VERSION = '1.3.0';
-const BUILD_DATE = '2026年10月26日';
+const VERSION = '1.3.1';
+const BUILD_DATE = '2026年10月27日';
 const UNDO_LIMIT = 120;
 const CARET_TOOLBAR_LINGER = 5000;
 const FADE_DURATION = 320;
+const BILIBILI_URL = 'https://space.bilibili.com/509648854';
 
 const FONT_SIZES = { small: 26, medium: 30, large: 34 } as const;
-const FONT_STEP_SIZE = 2;
-/** 允许在基准字号上下各调整 8 号（±16px），最大字号 = 基准 + 16。 */
-const MAX_FONT_STEP = 8;
-/** 最小字号（px） */
+/** 最小字号（px），自适应缩放的下限 */
 const MIN_FONT_SIZE = 18;
+/**
+ * 选中文字的字号五档（从小到大）。
+ * 直接写入绝对像素值，彻底避免 em 嵌套叠加导致的样式冲突。
+ */
+const FONT_SIZE_LEVELS = [20, 25, 30, 35, 40] as const;
+/** 五档中与「标准」对应的档位索引 */
+const DEFAULT_SIZE_LEVEL = 2;
 
 const defaultSettings: AppSettings = {
   background: THEME_SURFACES.dark.background,
@@ -207,11 +212,16 @@ function parseSettings(raw: Record<string, string>, fonts: FontOption[]): AppSet
   const theme: Theme = raw.theme === 'light' ? 'light' : 'dark';
   const surfaces = THEME_SURFACES[theme];
   const savedTextColor = raw.textColor?.toLowerCase();
+  // 默认字体固定为「思源黑体」：只有用户明确选过其它字体时才沿用。
+  const preferredFamily = fonts.find((option) => option.label === '思源黑体')?.family
+    ?? fonts[0]?.family
+    ?? '';
+  const savedFamily = fonts.some((option) => option.family === raw.font) ? raw.font : preferredFamily;
   return {
     background: raw.background ?? surfaces.background,
     frame: raw.frame ?? surfaces.frame,
     locked: raw.locked !== 'false',
-    font: fonts.some((option) => option.family === raw.font) ? raw.font : (fonts[0]?.family ?? ''),
+    font: raw.font ? savedFamily : preferredFamily,
     fontSize: raw.fontSize === 'small' || raw.fontSize === 'large' ? raw.fontSize : 'medium',
     textColor: savedTextColor ?? surfaces.textColor,
     bold: raw.bold === 'true',
@@ -622,24 +632,27 @@ function App() {
         break;
       }
     }
-    const level = settings.fontSize;
-    const stepBase = FONT_SIZES[level];
-    const editorSize = Number.parseFloat(window.getComputedStyle(editor).fontSize);
-    const ratio = editorSize > 0 ? pixelSize / editorSize : 1;
-    const calcStep = Math.round((ratio - 1) * (stepBase / FONT_STEP_SIZE));
-    const fontStep = Math.max(-MAX_FONT_STEP, Math.min(MAX_FONT_STEP, calcStep));
-    fontStepRef.current = fontStep;
-    const size = calcStep < 0 ? 'small' : calcStep > 0 ? 'large' : level;
+    // 当前文字字号最接近五档中的哪一档
+    let sizeLevel = 0;
+    let bestDelta = Number.POSITIVE_INFINITY;
+    FONT_SIZE_LEVELS.forEach((value, index) => {
+      const delta = Math.abs(value - pixelSize);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        sizeLevel = index;
+      }
+    });
+    fontStepRef.current = sizeLevel;
     const matched = fontsRef.current.find((option) => computed.fontFamily.includes(option.family));
     const next: SelectedFormat = {
       font: matched ? matched.family : settings.font,
-      fontSize: size,
+      fontSize: settings.fontSize,
       textColor: cssColorToHex(computed.color),
       bold: Number.parseInt(computed.fontWeight, 10) >= 600,
       italic: computed.fontStyle === 'italic' || computed.fontStyle.startsWith('oblique'),
       highlight,
       highlighted,
-      fontStep,
+      fontStep: sizeLevel,
     };
     setSelectedFormat((current) => (
       Object.keys(next).every((key) => current[key as keyof SelectedFormat] === next[key as keyof SelectedFormat]) ? current : next
@@ -665,11 +678,26 @@ function App() {
       }
       if (!gridRef.current?.contains(target)) hideToolbar();
     };
+    // 统一由渲染进程触发右键菜单，避免触屏长按 + 右键同时弹出两个原生菜单。
+    const handleContextMenu = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      const editor = target.closest<HTMLElement>('.cell-editor, input, textarea');
+      const isEditable = Boolean(editor);
+      const selection = window.getSelection();
+      const hasSelection = Boolean(selection && selection.toString().trim().length > 0);
+      // 只在编辑器 / 输入框或已有选中文字时接管，其它位置交给系统默认行为。
+      if (!isEditable && !hasSelection) return;
+      event.preventDefault();
+      void window.schoolwork.showContextMenu({ editable: isEditable, hasSelection });
+    };
     window.document.addEventListener('selectionchange', handleSelectionChange);
     window.document.addEventListener('pointerdown', handlePointerDown, true);
+    window.document.addEventListener('contextmenu', handleContextMenu);
     return () => {
       window.document.removeEventListener('selectionchange', handleSelectionChange);
       window.document.removeEventListener('pointerdown', handlePointerDown, true);
+      window.document.removeEventListener('contextmenu', handleContextMenu);
     };
   }, []);
 
@@ -725,14 +753,13 @@ function App() {
     if (!pinnedRef.current) scheduleCaretFade();
   };
 
-  const changeFontStep = (delta: number) => {
+  /** 五档字号：直接把选中文字改成目标档位的绝对字号，保留其他所有样式。 */
+  const applyFontSizeLevel = (level: number) => {
     const target = resolveEditor();
     const selection = window.getSelection();
     if (!target || !selection) return;
     const { editor, range: savedRange } = target;
-
-    const editorBase = Number.parseFloat(window.getComputedStyle(editor).fontSize) || getBaseFontSize();
-    const maxSize = getBaseFontSize() + MAX_FONT_STEP * FONT_STEP_SIZE;
+    const targetSize = FONT_SIZE_LEVELS[Math.max(0, Math.min(FONT_SIZE_LEVELS.length - 1, level))];
 
     // 只处理「被选区完整或部分覆盖」的文本节点；部分覆盖时先按选区边界切分，
     // 确保选区外的文字不会被连带改变字号。
@@ -743,9 +770,7 @@ function App() {
       while (textNode) {
         const current = textNode as Text;
         if (savedRange.intersectsNode(current) && (current.textContent ?? '').trim().length > 0) {
-          const host = current.parentElement ?? editor;
-          const px = Number.parseFloat(window.getComputedStyle(host).fontSize) || editorBase;
-          result.push({ node: current, size: Math.min(maxSize, Math.max(MIN_FONT_SIZE, px + delta * FONT_STEP_SIZE)) });
+          result.push({ node: current, size: targetSize });
         }
         textNode = walker.nextNode();
       }
@@ -791,9 +816,9 @@ function App() {
     splitEdges();
 
     const plans = collect();
-    const anyChanged = plans.some(({ node, size }) => {
-      const px = Number.parseFloat(window.getComputedStyle(node.parentElement ?? editor).fontSize) || editorBase;
-      return Math.abs(size - px) > 0.05;
+    const anyChanged = plans.some(({ node }) => {
+      const px = Number.parseFloat(window.getComputedStyle(node.parentElement ?? editor).fontSize) || 0;
+      return Math.abs(targetSize - px) > 0.05;
     });
     if (!plans.length || !anyChanged) return;
 
@@ -804,7 +829,7 @@ function App() {
       const parent = node.parentNode;
       if (!parent) return;
       const span = window.document.createElement('span');
-      span.style.fontSize = `${size / editorBase}em`;
+      span.style.fontSize = `${size}px`;
       parent.insertBefore(span, node);
       span.appendChild(node);
     });
@@ -916,7 +941,9 @@ function App() {
 
   const exportImage = async () => {
     if (!gridRef.current || exporting) return;
+    // 先让按钮立刻进入「导出中」橙色状态，再开始耗时的图片生成。
     setExporting(true);
+    await new Promise((resolve) => window.requestAnimationFrame(() => resolve(null)));
     try {
       const { toPng } = await import('html-to-image');
       const used = new Set<string>([settings.font]);
@@ -937,10 +964,8 @@ function App() {
         cacheBust: true,
       });
       const dataUrl = await appendFooterBar(raw, settings.theme);
-      const anchor = window.document.createElement('a');
-      anchor.download = `屏上作业-${new Date().toISOString().slice(0, 10)}.png`;
-      anchor.href = dataUrl;
-      anchor.click();
+      // 弹出系统「另存为」对话框；此调用返回前按钮始终保持橙色「导出中」。
+      await window.schoolwork.saveImage(dataUrl, `屏上作业-${new Date().toISOString().slice(0, 10)}.png`);
     } catch (error) {
       console.error('PNG export failed', error);
       window.alert('图片导出失败，请重试。');
@@ -1064,10 +1089,21 @@ function App() {
               {fonts.map((option) => <option key={option.family} value={option.family}>{option.label}</option>)}
             </select>
           </label>
-          <div className="font-size-controls" title="字号调整（各段文字分别加减一号）">
+          <div className="font-size-controls" title={`字号：${FONT_SIZE_LEVELS[selectedFormat.fontStep] ?? FONT_SIZE_LEVELS[DEFAULT_SIZE_LEVEL]}px`}>
             <span className="floating-caption">字号</span>
-            <button className="font-size-btn" aria-label="减小字号" title="减小字号" onMouseDown={(event) => event.preventDefault()} onClick={() => changeFontStep(-1)}>A−</button>
-            <button className="font-size-btn" aria-label="增大字号" title="增大字号" onMouseDown={(event) => event.preventDefault()} onClick={() => changeFontStep(1)}>A+</button>
+            <span className="font-size-glyph small" aria-hidden="true">A</span>
+            <input
+              className="font-size-slider"
+              type="range"
+              min={0}
+              max={FONT_SIZE_LEVELS.length - 1}
+              step={1}
+              aria-label="字号"
+              value={selectedFormat.fontStep}
+              onMouseDown={(event) => event.preventDefault()}
+              onChange={(event) => applyFontSizeLevel(Number(event.target.value))}
+            />
+            <span className="font-size-glyph large" aria-hidden="true">A</span>
           </div>
         </div>
         <div className="selection-toolbar-row style-controls-row">
@@ -1122,7 +1158,7 @@ function App() {
         </div>
         <div className="table-tools" aria-label="表格控制">
           <button className={`lock-button ${settings.locked ? 'locked' : ''}`} title={settings.locked ? '解锁表格尺寸' : '锁定表格尺寸'} onClick={() => updateSettings({ locked: !settings.locked })}>
-            <span className="lock-icon">{settings.locked ? '▣' : '⠿'}</span><span>{settings.locked ? '已锁定' : '可调整'}</span>
+            <span className="lock-icon">{settings.locked ? '▣' : '⠿'}</span><span>{settings.locked ? '布局锁定' : '布局解锁'}</span>
           </button>
           <label className="tool-select layout-select" title="表格格数">
             <span className="tool-caption">格数</span>
@@ -1135,11 +1171,14 @@ function App() {
             <span className="theme-icon">{settings.theme === 'dark' ? '☾' : '☀'}</span>
             <span>{settings.theme === 'dark' ? '深色' : '浅色'}</span>
           </button>
-          <label className={`history-toggle ${historyEnabled ? 'on' : ''} ${historyBusy ? 'busy' : ''}`} title="按天保存当天最后一次编辑内容到 history/ 目录">
-            <input type="checkbox" checked={historyEnabled} onChange={() => void toggleHistory()} />
-            <span className="history-switch" aria-hidden="true"><span className="history-knob" /></span>
-            <span className="history-label">记录</span>
-          </label>
+          <div className="history-block">
+            <label className={`history-toggle ${historyEnabled ? 'on' : ''} ${historyBusy ? 'busy' : ''}`} title="按天保存当天最后一次编辑内容到 history/ 目录">
+              <input type="checkbox" checked={historyEnabled} onChange={() => void toggleHistory()} />
+              <span className="history-switch" aria-hidden="true"><span className="history-knob" /></span>
+              <span className="history-label">每日存档</span>
+            </label>
+            <button className="history-link" type="button" onClick={() => void window.schoolwork.openHistory()}>打开 history 文件夹</button>
+          </div>
           <button
             className={`export-button ${exporting ? 'exporting' : ''}`}
             title="导出 PNG 图片"
@@ -1165,7 +1204,7 @@ function App() {
             <div><dt>版本</dt><dd>v{VERSION} · {BUILD_DATE}</dd></div>
             <div><dt>字体</dt><dd>{fonts.length} 个（来自 fonts/ 目录）</dd></div>
             <div><dt>项目地址</dt><dd><a href="https://github.com/RobertLau2480/SchoolworkOnScreen" target="_blank" rel="noreferrer">https://github.com/RobertLau2480/SchoolworkOnScreen</a></dd></div>
-            <div><dt>作者</dt><dd>OctSeventh（RobertLau）</dd></div>
+            <div><dt>作者</dt><dd>OctSeventh（RobertLau） · <a href={BILIBILI_URL} target="_blank" rel="noreferrer">B 站主页</a></dd></div>
           </dl>
           <button className="about-close" onClick={() => setAboutOpen(false)}>关闭</button>
         </section>

@@ -138,28 +138,28 @@ function createWindow(): void {
 
   mainWindow.maximize();
   mainWindow.once('ready-to-show', () => mainWindow?.show());
-  // 右键菜单：可编辑区域提供撤销/重做/剪切/复制/粘贴/全选；选中文字时提供复制。
-  mainWindow.webContents.on('context-menu', (_event, params) => {
-    const items: Electron.MenuItemConstructorOptions[] = [];
-    if (params.isEditable) {
-      items.push(
-        { label: '撤销', role: 'undo', enabled: params.editFlags.canUndo },
-        { label: '重做', role: 'redo', enabled: params.editFlags.canRedo },
-        { type: 'separator' },
-        { label: '剪切', role: 'cut', enabled: params.editFlags.canCut },
-        { label: '复制', role: 'copy', enabled: params.editFlags.canCopy },
-        { label: '粘贴', role: 'paste', enabled: params.editFlags.canPaste },
-        { label: '全选', role: 'selectAll' },
-      );
-    } else if (params.selectionText.trim()) {
-      items.push({ label: '复制', role: 'copy' }, { label: '全选', role: 'selectAll' });
-    }
-    if (!items.length) return;
-    Menu.buildFromTemplate(items).popup({ window: mainWindow ?? undefined });
-  });
+  // 只允许打开项目主页与作者 B 站主页，其它外链一律拦截。
+  const allowedHosts = new Set(['github.com', 'space.bilibili.com']);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url === 'https://github.com/RobertLau2480/SchoolworkOnScreen') void shell.openExternal(url);
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' && allowedHosts.has(parsed.hostname)) void shell.openExternal(url);
+    } catch {
+      /* 非法 URL 直接忽略 */
+    }
     return { action: 'deny' };
+  });
+  // 阻止窗口内跳转到外部站点（例如误点链接），改由系统浏览器打开。
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' && allowedHosts.has(parsed.hostname)) {
+        event.preventDefault();
+        void shell.openExternal(url);
+      }
+    } catch {
+      /* ignore */
+    }
   });
   mainWindow.on('focus', () => setDisplayAwake(true));
   mainWindow.on('blur', () => setDisplayAwake(false));
@@ -265,6 +265,65 @@ ipcMain.handle('history:save', (_event, payload: { date: string; html: string; e
     return false;
   }
 });
+// 导出图片：弹出系统「另存为」对话框并写入 PNG。
+// 渲染进程会一直等待此调用返回，因此「导出中」橙色状态会保持到对话框关闭。
+ipcMain.handle('image:save', async (_event, dataUrl: string, suggestedName: string) => {
+  if (!mainWindow) return false;
+  const { dialog } = await import('electron');
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: '导出图片',
+    defaultPath: path.join(app.getPath('pictures'), suggestedName),
+    filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+  });
+  if (result.canceled || !result.filePath) return false;
+  try {
+    const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+    fs.writeFileSync(result.filePath, Buffer.from(base64, 'base64'));
+    return true;
+  } catch (error) {
+    console.error('save image failed', error);
+    return false;
+  }
+});
+
+// 打开 history 目录（供底栏「每日存档」下的超链接调用）。
+ipcMain.handle('history:open', async () => {
+  const directory = path.join(dataDirectory(), 'history');
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+  } catch {
+    /* ignore */
+  }
+  const error = await shell.openPath(directory);
+  return error === '';
+});
+
+/**
+ * 渲染进程主动请求的右键菜单。
+ * 使用单一入口避免触屏长按 + 右键事件重复弹出两个菜单。
+ */
+ipcMain.handle('menu:context', async (_event, payload: { editable: boolean; hasSelection: boolean }) => {
+  if (!mainWindow) return;
+  const items: Electron.MenuItemConstructorOptions[] = [];
+  if (payload.editable) {
+    items.push(
+      { label: '撤销', role: 'undo' },
+      { label: '重做', role: 'redo' },
+      { type: 'separator' },
+      { label: '剪切', role: 'cut' },
+      { label: '复制', role: 'copy' },
+      { label: '粘贴', role: 'paste' },
+      { label: '全选', role: 'selectAll' },
+    );
+  } else if (payload.hasSelection) {
+    items.push({ label: '复制', role: 'copy' }, { label: '全选', role: 'selectAll' });
+  }
+  if (!items.length) return;
+  await new Promise<void>((resolve) => {
+    Menu.buildFromTemplate(items).popup({ window: mainWindow!, callback: () => resolve() });
+  });
+});
+
 ipcMain.handle('dialog:confirm-layout', async (_event, message: string) => {
   const { dialog } = await import('electron');
   const result = await dialog.showMessageBox(mainWindow!, {
