@@ -16,7 +16,7 @@ function resolveFontPath(url: string): string | null {
   const candidates = [
     path.isAbsolute(clean) ? clean : path.join(rendererRoot, clean.replace(/^\.\//, '')),
     path.join(app.getAppPath(), clean.replace(/^\//, '')),
-    path.join(app.getAppPath(), 'fonts-woff2', path.basename(clean)),
+    path.join(app.getAppPath(), 'fonts', path.basename(clean)),
   ];
   return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
 }
@@ -156,6 +156,70 @@ ipcMain.handle('fonts:data-urls', (_event, urls: string[]) => {
     if (dataUrl) result[url] = dataUrl;
   });
   return result;
+});
+
+/** 用户可增减字体的目录：打包后位于 EXE 旁的 fonts/，开发时位于项目根 fonts/。 */
+function userFontDirectory(): string {
+  if (app.isPackaged) {
+    const directory = process.env.PORTABLE_EXECUTABLE_DIR ?? path.dirname(process.execPath);
+    return path.join(directory, 'fonts');
+  }
+  return path.join(app.getAppPath(), 'fonts');
+}
+
+const FONT_EXTENSIONS = new Set(['.woff2', '.woff', '.ttf', '.otf']);
+/** 单次返回字体数量上限，避免异常目录拖慢启动 */
+const MAX_FONTS = 200;
+
+/** 按扩展名推断 MIME 类型。 */
+function fontMime(file: string): string {
+  const extension = path.extname(file).toLowerCase();
+  if (extension === '.woff2') return 'font/woff2';
+  if (extension === '.woff') return 'font/woff';
+  if (extension === '.otf') return 'font/otf';
+  return 'font/ttf';
+}
+
+/** 把磁盘字体文件读成 data URL，读取失败返回 null。 */
+function readFontDataUrl(file: string): string | null {
+  try {
+    return `data:${fontMime(file)};base64,${fs.readFileSync(file).toString('base64')}`;
+  } catch (error) {
+    console.error('read font failed', file, error);
+    return null;
+  }
+}
+
+// 每次启动扫描一次用户字体目录，用户增删字体后重启即可生效。
+ipcMain.handle('fonts:list', () => {
+  const directory = userFontDirectory();
+  if (!fs.existsSync(directory)) {
+    try {
+      fs.mkdirSync(directory, { recursive: true });
+    } catch {
+      return [];
+    }
+    return [];
+  }
+  try {
+    return fs.readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && FONT_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
+      .slice(0, MAX_FONTS)
+      .map((entry) => {
+        const file = path.join(directory, entry.name);
+        const dataUrl = readFontDataUrl(file);
+        if (!dataUrl) return null;
+        return {
+          label: decodeURIComponent(entry.name.replace(/\.[^.]+$/, '')),
+          mime: fontMime(file),
+          dataUrl,
+        };
+      })
+      .filter((item): item is { label: string; mime: string; dataUrl: string } => item !== null);
+  } catch (error) {
+    console.error('fonts:list failed', error);
+    return [];
+  }
 });
 // 让系统原生菜单（复制/剪切/粘贴）跟随应用主题，避免白底白字。
 ipcMain.handle('theme:set', (_event, theme: string) => {

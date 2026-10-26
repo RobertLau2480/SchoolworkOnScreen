@@ -1,16 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import appIcon from '../icon.png';
-import { DEFAULT_FONT_FAMILY, buildFontEmbedCSS, fontOptions, loadLocalFonts } from './fonts';
+import { buildFontEmbedCSS, loadLocalFonts, type FontOption } from './fonts';
 import type { AppSettings, HomeworkCell, HomeworkDocument, Layout, Theme } from './types';
 
-/** 由 font-family 取列表展示名（去掉前缀）。 */
-function fontLabel(family: string): string {
-  const option = fontOptions.find((item) => item.family === family);
-  return option ? option.label : family;
-}
-
 const FONT_FALLBACK = '"Microsoft YaHei", "SimHei", sans-serif';
-const fontStack = (family: string) => `"${family}", ${FONT_FALLBACK}`;
+const fontStack = (family: string) => (family ? `"${family}", ${FONT_FALLBACK}` : FONT_FALLBACK);
 
 const layouts: Record<Layout, { rows: number; columns: number }> = {
   '2x3': { rows: 2, columns: 3 },
@@ -19,40 +13,39 @@ const layouts: Record<Layout, { rows: number; columns: number }> = {
 };
 const subjects = ['语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治', '其他'];
 
-// 深色 / 浅色模式下的字体预设颜色（按顺序一一对应）
 const THEME_PALETTES: Record<Theme, string[]> = {
-  // 深色模式的蓝色调浅，便于在深底上阅读
   dark: ['#ffffff', '#ff5252', '#ffd83d', '#7cc0ff', '#c77dff'],
   light: ['#000000', '#c62828', '#b58900', '#1565c0', '#6a1b9a'],
 };
-// 每种模式对应的背景、表面与默认文字颜色
 const THEME_SURFACES: Record<Theme, { background: string; frame: string; textColor: string }> = {
   dark: { background: '#29332f', frame: '#35413b', textColor: '#ffffff' },
   light: { background: '#eef1ee', frame: '#ffffff', textColor: '#000000' },
 };
 
-// 高光颜色：深色模式保留原色，浅色模式使用很亮的黄色
 const HIGHLIGHT_COLORS: Record<Theme, string> = { dark: '#b85c1e', light: '#fff176' };
 const LEGACY_HIGHLIGHT_COLORS = ['#087f80', '#58d9e6'];
-const VERSION = '1.2.0';
-const BUILD_DATE = '2026年10月25日';
-const UNDO_LIMIT = 60;
+const VERSION = '1.3.0';
+const BUILD_DATE = '2026年10月26日';
+const UNDO_LIMIT = 120;
+const CARET_TOOLBAR_LINGER = 5000;
+const FADE_DURATION = 320;
+
+const FONT_SIZES = { small: 26, medium: 30, large: 34 } as const;
+const FONT_STEP_SIZE = 2;
+const MAX_FONT_STEP = 5;
+const MIN_FONT_SIZE = 14;
 
 const defaultSettings: AppSettings = {
   background: THEME_SURFACES.dark.background,
   frame: THEME_SURFACES.dark.frame,
   locked: true,
-  font: DEFAULT_FONT_FAMILY,
+  font: '',
   fontSize: 'medium',
   textColor: THEME_SURFACES.dark.textColor,
   bold: false,
   highlight: HIGHLIGHT_COLORS.dark,
   theme: 'dark',
 };
-const FONT_SIZES = { small: 26, medium: 30, large: 34 } as const;
-const FONT_STEP_SIZE = 2;
-const MAX_FONT_STEP = 5;
-const MIN_FONT_SIZE = 14;
 
 function formatRelativeTime(timestamp: number | null | undefined, now: number): string {
   if (!timestamp) return '';
@@ -72,7 +65,11 @@ function isTimeStale(timestamp: number | null | undefined, now: number): boolean
   return now - timestamp > 12 * 60 * 60 * 1000;
 }
 
-type SelectedFormat = Pick<AppSettings, 'font' | 'fontSize' | 'textColor' | 'bold' | 'highlight'> & { highlighted: boolean; italic: boolean; fontStep: number };
+type SelectedFormat = Pick<AppSettings, 'font' | 'fontSize' | 'textColor' | 'bold' | 'highlight'> & {
+  highlighted: boolean;
+  italic: boolean;
+  fontStep: number;
+};
 
 function fitEditor(editor: HTMLElement, baseSize: number): void {
   const overflows = () => editor.scrollHeight > editor.clientHeight + 1 || editor.scrollWidth > editor.clientWidth + 1;
@@ -98,7 +95,6 @@ function cssColorToHex(color: string): string {
     : '#e6edef';
 }
 
-/** 构建从 from 主题到 to 主题的字体颜色映射表。 */
 function buildColorMapping(from: Theme, to: Theme): Record<string, string> {
   const mapping: Record<string, string> = {};
   THEME_PALETTES[from].forEach((color, index) => {
@@ -107,7 +103,6 @@ function buildColorMapping(from: Theme, to: Theme): Record<string, string> {
   return mapping;
 }
 
-/** 依据映射表替换 HTML 富文本中已有的行内文字颜色。 */
 function remapTextColors(html: string, mapping: Record<string, string>): string {
   if (!html || !html.includes('color')) return html;
   const container = window.document.createElement('div');
@@ -126,7 +121,6 @@ function remapTextColors(html: string, mapping: Record<string, string>): string 
   return changed ? container.innerHTML : html;
 }
 
-/** 依据映射表替换 HTML 富文本中已有的高光背景色。 */
 function remapHighlightColors(html: string, mapping: Record<string, string>): string {
   if (!html || !html.includes('background')) return html;
   const container = window.document.createElement('div');
@@ -145,18 +139,53 @@ function remapHighlightColors(html: string, mapping: Record<string, string>): st
   return changed ? container.innerHTML : html;
 }
 
-/**
- * 清除选区内元素上的同名内联样式。
- * 这样「给已高光/已改色的文字重新设置样式」时才能真正覆盖旧值，
- * 同时其它未涉及的样式（如高光、字号）仍会保留。
- */
-function clearInlineProperty(editor: HTMLElement, range: Range, property: string): void {
-  editor.querySelectorAll<HTMLElement>('[style]').forEach((element) => {
-    const style = element.style as unknown as Record<string, string>;
-    if (!style[property]) return;
-    if (!range.intersectsNode(element)) return;
-    style[property] = '';
-    if (!element.getAttribute('style')) element.removeAttribute('style');
+function saveOffsets(editor: HTMLElement, range: Range): { start: number; end: number } {
+  const pre = window.document.createRange();
+  pre.selectNodeContents(editor);
+  pre.setEnd(range.startContainer, range.startOffset);
+  const start = pre.toString().length;
+  return { start, end: start + range.toString().length };
+}
+
+function restoreOffsets(editor: HTMLElement, start: number, end: number): Range {
+  const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  let count = 0;
+  let startNode: Node = editor;
+  let endNode: Node = editor;
+  let startOffset = 0;
+  let endOffset = 0;
+  let node = walker.nextNode();
+  while (node) {
+    const length = (node as Text).length;
+    if (startNode === editor && count + length >= start) {
+      startNode = node;
+      startOffset = start - count;
+    }
+    if (endNode === editor && count + length >= end) {
+      endNode = node;
+      endOffset = end - count;
+      break;
+    }
+    count += length;
+    node = walker.nextNode();
+  }
+  const range = window.document.createRange();
+  try {
+    range.setStart(startNode, Math.max(0, startOffset));
+    range.setEnd(endNode, Math.max(0, endOffset));
+  } catch {
+    range.selectNodeContents(editor);
+  }
+  return range;
+}
+
+function unwrapSizeSpans(editor: HTMLElement, range: Range): void {
+  editor.querySelectorAll<HTMLElement>('span[style*="font-size"]').forEach((span) => {
+    if (!range.intersectsNode(span)) return;
+    const parent = span.parentNode;
+    if (!parent) return;
+    while (span.firstChild) parent.insertBefore(span.firstChild, span);
+    parent.removeChild(span);
   });
 }
 
@@ -171,7 +200,7 @@ function emptyDocument(layout: Layout): HomeworkDocument {
   };
 }
 
-function parseSettings(raw: Record<string, string>): AppSettings {
+function parseSettings(raw: Record<string, string>, fonts: FontOption[]): AppSettings {
   const theme: Theme = raw.theme === 'light' ? 'light' : 'dark';
   const surfaces = THEME_SURFACES[theme];
   const savedTextColor = raw.textColor?.toLowerCase();
@@ -179,7 +208,7 @@ function parseSettings(raw: Record<string, string>): AppSettings {
     background: raw.background ?? surfaces.background,
     frame: raw.frame ?? surfaces.frame,
     locked: raw.locked !== 'false',
-    font: fontOptions.some((option) => option.family === raw.font) ? raw.font : defaultSettings.font,
+    font: fonts.some((option) => option.family === raw.font) ? raw.font : (fonts[0]?.family ?? ''),
     fontSize: raw.fontSize === 'small' || raw.fontSize === 'large' ? raw.fontSize : 'medium',
     textColor: savedTextColor ?? surfaces.textColor,
     bold: raw.bold === 'true',
@@ -196,7 +225,6 @@ function escapeHtml(value: string): string {
     .split('\u0022').join('\u0026quot;');
 }
 
-/** 生成当天的历史记录 HTML：极简、内联样式，保留字体/颜色/粗斜体/高光。 */
 function buildHistoryHtml(doc: HomeworkDocument, theme: Theme): string {
   const surfaces = THEME_SURFACES[theme];
   const { columns } = layouts[doc.layout];
@@ -216,6 +244,42 @@ function buildHistoryHtml(doc: HomeworkDocument, theme: Theme): string {
     + `<div class="g">${cells}</div></body></html>`;
 }
 
+async function appendFooterBar(dataUrl: string, theme: Theme): Promise<string> {
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error('image decode failed'));
+    el.src = dataUrl;
+  });
+  const light = theme === 'light';
+  const scale = 2;
+  const barHeight = Math.round(46 * scale);
+  const canvas = window.document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height + barHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return dataUrl;
+  ctx.fillStyle = light ? '#f4f7f4' : '#1a2320';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(image, 0, 0);
+  ctx.fillStyle = light ? '#d5ded9' : '#31403b';
+  ctx.fillRect(0, image.height, canvas.width, Math.max(1, scale));
+  const padding = Math.round(16 * scale);
+  const centerY = image.height + barHeight / 2 + scale * 0.5;
+  ctx.textBaseline = 'middle';
+  ctx.font = `${Math.round(12 * scale)}px "Segoe UI","Microsoft YaHei",sans-serif`;
+  ctx.fillStyle = light ? '#5c6d67' : '#a6b8b2';
+  ctx.textAlign = 'left';
+  ctx.fillText(`SchoolworkOnScreen  v${VERSION}`, padding, centerY);
+  const stamp = new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const text = `${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())}  `
+    + `${pad(stamp.getHours())}:${pad(stamp.getMinutes())}:${pad(stamp.getSeconds())}`;
+  ctx.textAlign = 'right';
+  ctx.fillText(text, canvas.width - padding, centerY);
+  return canvas.toDataURL('image/png');
+}
+
 function clampTracks(tracks: number[], index: number, delta: number): number[] {
   const next = [...tracks];
   const total = next[index] + next[index + 1];
@@ -228,11 +292,14 @@ function clampTracks(tracks: number[], index: number, delta: number): number[] {
 function App() {
   const [document, setDocument] = useState<HomeworkDocument>(() => emptyDocument('2x3'));
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [fonts, setFonts] = useState<FontOption[]>([]);
   const [selectedFormat, setSelectedFormat] = useState<SelectedFormat>({
-    font: defaultSettings.font, fontSize: defaultSettings.fontSize, textColor: defaultSettings.textColor,
+    font: '', fontSize: defaultSettings.fontSize, textColor: defaultSettings.textColor,
     bold: false, italic: false, highlight: defaultSettings.highlight, highlighted: false, fontStep: 0,
   });
   const [toolbarVisible, setToolbarVisible] = useState(false);
+  const [toolbarPinned, setToolbarPinned] = useState(false);
+  const [toolbarFading, setToolbarFading] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ left: 0, top: 0, side: 'below' as 'above' | 'below' });
   const [aboutOpen, setAboutOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -243,6 +310,7 @@ function App() {
   const [historyBusy, setHistoryBusy] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+
   const gridRef = useRef<HTMLElement>(null);
   const formatToolbarRef = useRef<HTMLDivElement>(null);
   const selectionRectRef = useRef<{ left: number; top: number; right: number; bottom: number } | null>(null);
@@ -256,16 +324,31 @@ function App() {
   const redoStackRef = useRef<HomeworkDocument[]>([]);
   const documentRef = useRef(document);
   const historyTimerRef = useRef(0);
+  const caretTimerRef = useRef(0);
+  const fadeTimerRef = useRef(0);
+  const fontsRef = useRef<FontOption[]>([]);
+  const pinnedRef = useRef(false);
+  const themeRef = useRef<Theme>('dark');
   documentRef.current = document;
+  fontsRef.current = fonts;
+  pinnedRef.current = toolbarPinned;
+  themeRef.current = settings.theme;
 
-  /** 记录一次快照用于撤销。 */
-  const pushUndo = () => {
-    undoStackRef.current.push(structuredClone(documentRef.current));
+  const fontLabel = (family: string) => {
+    const option = fonts.find((item) => item.family === family);
+    if (option) return option.label;
+    return family.replace(/^SWOS-/, '');
+  };
+
+  const recordUndo = (snapshot: HomeworkDocument) => {
+    undoStackRef.current.push(snapshot);
     if (undoStackRef.current.length > UNDO_LIMIT) undoStackRef.current.shift();
     redoStackRef.current = [];
     setCanUndo(true);
     setCanRedo(false);
   };
+
+  const pushUndo = () => recordUndo(structuredClone(documentRef.current));
 
   const undo = () => {
     const previous = undoStackRef.current.pop();
@@ -286,36 +369,44 @@ function App() {
   };
 
   useEffect(() => {
-    loadLocalFonts();
     let alive = true;
-    void window.schoolwork.load().then(({ content, settings: savedSettings }) => {
+    void (async () => {
+      const list = await loadLocalFonts();
+      if (!alive) return;
+      setFonts(list);
+      fontsRef.current = list;
+      let saved: Record<string, string> = {};
+      let content: HomeworkDocument | null = null;
+      try {
+        const result = await window.schoolwork.load();
+        content = result.content;
+        saved = result.settings;
+      } catch {
+        /* ignore */
+      }
       if (!alive) return;
       const chosen = content && layouts[content.layout] ? content.layout : '2x3';
-      const fresh = content?.cells?.length === layouts[chosen].rows * layouts[chosen].columns
-        ? content
-        : emptyDocument(chosen);
-      setDocument(fresh);
-      const parsedSettings = parseSettings(savedSettings);
-      setSettings(parsedSettings);
+      setDocument(content?.cells?.length === layouts[chosen].rows * layouts[chosen].columns ? content : emptyDocument(chosen));
+      const parsed = parseSettings(saved, list);
+      setSettings(parsed);
       setSelectedFormat({
-        font: parsedSettings.font,
-        fontSize: parsedSettings.fontSize,
-        textColor: parsedSettings.textColor,
-        bold: parsedSettings.bold,
+        font: parsed.font,
+        fontSize: parsed.fontSize,
+        textColor: parsed.textColor,
+        bold: parsed.bold,
         italic: false,
-        highlight: parsedSettings.highlight,
+        highlight: parsed.highlight,
         highlighted: false,
         fontStep: 0,
       });
       fontStepRef.current = 0;
-      setHistoryEnabled(savedSettings.historyEnabled === 'true');
+      setHistoryEnabled(saved.historyEnabled === 'true');
       setLoaded(true);
-    }).catch(() => setLoaded(true));
+    })();
     void window.schoolwork.isMaximized().then(setMaximized);
     return () => { alive = false; };
   }, []);
 
-  // 每分钟刷新一次相对时间显示
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60000);
     return () => window.clearInterval(timer);
@@ -336,7 +427,6 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [settings, historyEnabled, loaded]);
 
-  // 历史记录：内容变动 1.5 秒后，把当天最终内容写入 history/YYYY-MM-DD.html
   useEffect(() => {
     if (!loaded) return;
     window.clearTimeout(historyTimerRef.current);
@@ -349,7 +439,6 @@ function App() {
     return () => window.clearTimeout(historyTimerRef.current);
   }, [document, settings.theme, historyEnabled, loaded]);
 
-  // 原生右键菜单（复制/剪切/粘贴）由系统绘制，需同步 nativeTheme 才能避免白底白字
   useEffect(() => {
     void window.schoolwork.setNativeTheme(settings.theme);
   }, [settings.theme]);
@@ -375,10 +464,7 @@ function App() {
     };
   }, []);
 
-  // 单元格基准字号：仅由全局字号设置决定，不受选中文字的字号调整影响
-  const getBaseFontSize = (level: AppSettings['fontSize'] = settings.fontSize) => {
-    return FONT_SIZES[level];
-  };
+  const getBaseFontSize = (level: AppSettings['fontSize'] = settings.fontSize) => FONT_SIZES[level];
 
   useEffect(() => {
     const baseSize = getBaseFontSize();
@@ -397,7 +483,7 @@ function App() {
       observer?.disconnect();
       window.removeEventListener('resize', fitAll);
     };
-  }, [document.layout, settings.fontSize]);
+  }, [document.layout, settings.fontSize, fonts.length]);
 
   const updateCell = (index: number, patch: Partial<HomeworkCell>) => {
     setDocument((current) => ({
@@ -406,12 +492,9 @@ function App() {
     }));
   };
 
-  const markCellModified = (index: number) => {
-    updateCell(index, { lastModified: Date.now() });
-  };
+  const markCellModified = (index: number) => updateCell(index, { lastModified: Date.now() });
 
-  // 仅在内容真正变化时才写入文本并刷新“修改时间”，避免光标进入/离开即计时
-  const queueContentUpdate = (index: number, editor: HTMLElement, immediate = false) => {
+  const queueContentUpdate = (index: number, editor: HTMLElement, immediate = false, skipUndo = false) => {
     const pending = inputTimersRef.current.get(index);
     if (pending) window.clearTimeout(pending);
     const apply = () => {
@@ -420,6 +503,7 @@ function App() {
       setDocument((current) => {
         const cell = current.cells[index];
         if (!cell || cell.text === html) return current;
+        if (!skipUndo) recordUndo(structuredClone(current));
         return {
           ...current,
           cells: current.cells.map((item, cellIndex) => cellIndex === index
@@ -452,43 +536,76 @@ function App() {
     resizeRef.current = { axis, index, start: axis === 'columns' ? event.clientX : event.clientY, values };
   };
 
+  const clearCaretTimer = () => {
+    window.clearTimeout(caretTimerRef.current);
+    window.clearTimeout(fadeTimerRef.current);
+  };
+
+  const scheduleCaretFade = () => {
+    clearCaretTimer();
+    if (pinnedRef.current) return;
+    caretTimerRef.current = window.setTimeout(() => {
+      setToolbarFading(true);
+      fadeTimerRef.current = window.setTimeout(() => {
+        setToolbarVisible(false);
+        setToolbarFading(false);
+      }, FADE_DURATION);
+    }, CARET_TOOLBAR_LINGER);
+  };
+
+  const hideToolbar = () => {
+    clearCaretTimer();
+    setToolbarFading(false);
+    setToolbarVisible(false);
+    setToolbarPinned(false);
+  };
+
   const readSelectionFormat = () => {
     const selection = window.getSelection();
     if (!selection?.rangeCount) {
-      if (toolbarPointerRef.current) return;
-      setToolbarVisible(false);
+      if (!toolbarPointerRef.current) hideToolbar();
       return;
     }
     const range = selection.getRangeAt(0);
     if (!gridRef.current?.contains(range.commonAncestorContainer)) {
-      if (!toolbarPointerRef.current) setToolbarVisible(false);
+      if (!toolbarPointerRef.current) hideToolbar();
       return;
     }
 
-    if (range.collapsed || !selection.toString().trim()) {
-      if (toolbarPointerRef.current) return;
-      setToolbarVisible(false);
-      return;
-    }
-
-    selectionRef.current = range.cloneRange();
-    setToolbarVisible(true);
-    const bounds = range.getBoundingClientRect();
-    selectionRectRef.current = { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom };
-    const side = 'below';
-    setToolbarPosition({
-      left: bounds.left + bounds.width / 2,
-      top: bounds.bottom + 10,
-      side,
-    });
     const anchor = selection.anchorNode?.nodeType === Node.ELEMENT_NODE
       ? selection.anchorNode as HTMLElement
       : selection.anchorNode?.parentElement;
     const editor = anchor?.closest<HTMLElement>('.cell-editor');
-    if (!editor) return;
+    if (!editor) {
+      if (!toolbarPointerRef.current) hideToolbar();
+      return;
+    }
+
+    const hasText = !range.collapsed && Boolean(selection.toString().trim());
+    if (toolbarPointerRef.current) {
+      // 操作菜单期间不改变显示状态
+      return;
+    }
+
+    selectionRef.current = range.cloneRange();
+
+    const bounds = range.getBoundingClientRect();
+    const rect = range.collapsed
+      ? { left: bounds.left, top: bounds.top, right: bounds.left, bottom: bounds.bottom || bounds.top }
+      : { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom };
+    selectionRectRef.current = rect;
+    setToolbarFading(false);
+    setToolbarVisible(true);
+    setToolbarPinned(hasText);
+    setToolbarPosition({ left: rect.left + (rect.right - rect.left) / 2, top: rect.bottom + 10, side: 'below' });
+    if (hasText) clearCaretTimer();
+    else scheduleCaretFade();
+
+    if (!hasText) return;
+
     const computed = window.getComputedStyle(anchor ?? editor);
     const pixelSize = Number.parseFloat(computed.fontSize);
-    const themeHighlight = HIGHLIGHT_COLORS[settings.theme];
+    const themeHighlight = HIGHLIGHT_COLORS[themeRef.current];
     let highlight = themeHighlight;
     let highlighted = false;
     for (let element = anchor; element && element !== editor; element = element.parentElement) {
@@ -500,7 +617,6 @@ function App() {
         break;
       }
     }
-    // 根据选中文字相对编辑器基准字号的倍率换算 step（选中普通文字时为 0）
     const level = settings.fontSize;
     const stepBase = FONT_SIZES[level];
     const editorSize = Number.parseFloat(window.getComputedStyle(editor).fontSize);
@@ -509,7 +625,7 @@ function App() {
     const fontStep = Math.max(-MAX_FONT_STEP, Math.min(MAX_FONT_STEP, calcStep));
     fontStepRef.current = fontStep;
     const size = calcStep < 0 ? 'small' : calcStep > 0 ? 'large' : level;
-    const matched = fontOptions.find((option) => computed.fontFamily.includes(option.family));
+    const matched = fontsRef.current.find((option) => computed.fontFamily.includes(option.family));
     const next: SelectedFormat = {
       font: matched ? matched.family : settings.font,
       fontSize: size,
@@ -520,25 +636,29 @@ function App() {
       highlighted,
       fontStep,
     };
-    setSelectedFormat((current) => Object.keys(next).every((key) => current[key as keyof SelectedFormat] === next[key as keyof SelectedFormat]) ? current : next);
+    setSelectedFormat((current) => (
+      Object.keys(next).every((key) => current[key as keyof SelectedFormat] === next[key as keyof SelectedFormat]) ? current : next
+    ));
   };
+
+  const readSelectionFormatRef = useRef(readSelectionFormat);
+  readSelectionFormatRef.current = readSelectionFormat;
 
   useEffect(() => {
     const handleSelectionChange = () => {
       const selection = window.getSelection();
       if (!selection?.rangeCount) return;
       const range = selection.getRangeAt(0);
-      if (gridRef.current?.contains(range.commonAncestorContainer)) readSelectionFormat();
+      if (gridRef.current?.contains(range.commonAncestorContainer)) readSelectionFormatRef.current();
     };
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (formatToolbarRef.current?.contains(target)) {
         toolbarPointerRef.current = true;
+        if (!pinnedRef.current) scheduleCaretFade();
         return;
       }
-      if (!gridRef.current?.contains(target)) {
-        setToolbarVisible(false);
-      }
+      if (!gridRef.current?.contains(target)) hideToolbar();
     };
     window.document.addEventListener('selectionchange', handleSelectionChange);
     window.document.addEventListener('pointerdown', handlePointerDown, true);
@@ -555,119 +675,126 @@ function App() {
     const bounds = toolbar.getBoundingClientRect();
     const anchorCenter = (selectionBounds.left + selectionBounds.right) / 2;
     const left = Math.min(window.innerWidth - bounds.width - 8, Math.max(8, anchorCenter - bounds.width / 2));
-    // 始终显示在文字下方
     const belowTop = selectionBounds.bottom + 10;
     const top = Math.min(window.innerHeight - bounds.height - 8, belowTop);
     const side = 'below';
-    // 如果下方放不下，允许滚动到底部位置
     const finalTop = top < 8 ? Math.max(8, top) : top;
     if (left !== toolbarPosition.left || finalTop !== toolbarPosition.top || side !== toolbarPosition.side) {
       setToolbarPosition({ left, top: finalTop, side });
     }
   }, [toolbarPosition, toolbarVisible, selectedFormat]);
 
-  /** 恢复保存的选区到编辑器，供 execCommand 使用。 */
-  const restoreSavedSelection = (editor: HTMLElement, savedRange: Range): boolean => {
-    const selection = window.getSelection();
-    if (!selection) return false;
-    editor.focus();
-    selection.removeAllRanges();
-    selection.addRange(savedRange);
-    return true;
-  };
-
-  const applyInlineFormat = (property: 'fontFamily' | 'fontSize' | 'color' | 'backgroundColor' | 'fontWeight' | 'fontStyle', value: string) => {
+  const resolveEditor = (): { editor: HTMLElement; range: Range } | null => {
     const savedRange = selectionRef.current;
-    const selection = window.getSelection();
-    if (!savedRange || !selection || !gridRef.current?.contains(savedRange.commonAncestorContainer)) return;
+    if (!savedRange || !gridRef.current?.contains(savedRange.commonAncestorContainer)) return null;
     const node = savedRange.commonAncestorContainer;
     const editor = (node.nodeType === Node.ELEMENT_NODE ? node as HTMLElement : node.parentElement)?.closest<HTMLElement>('.cell-editor');
-    if (!editor) return;
+    return editor ? { editor, range: savedRange } : null;
+  };
 
-    // 颜色 / 高光 / 粗体交给 execCommand 处理：浏览器会自动拆分嵌套的行内标签，
-    // 因此可以覆盖选区内已有的同类样式（这正是之前无法覆盖旧高光的原因）。
-    if (property === 'color' || property === 'backgroundColor' || property === 'fontWeight' || property === 'fontStyle') {
-      if (!restoreSavedSelection(editor, savedRange)) return;
-      window.document.execCommand('styleWithCSS', false, 'true');
-      if (property === 'color') window.document.execCommand('foreColor', false, value);
-      else if (property === 'backgroundColor') {
-        // 'transparent' 表示取消高光，露出单元格背景色
-        window.document.execCommand('hiliteColor', false, value === 'var(--cell-bg)' ? 'transparent' : value);
-      } else if (property === 'fontWeight') {
-        window.document.execCommand('bold');
-      } else {
-        window.document.execCommand('italic');
-      }
-      const currentSelection = window.getSelection();
-      if (currentSelection?.rangeCount) selectionRef.current = currentSelection.getRangeAt(0).cloneRange();
-      const cellIndex = Number(editor.dataset.cellIndex);
-      updateCell(cellIndex, { text: editor.innerHTML });
-      markCellModified(cellIndex);
-      readSelectionFormat();
-      return;
-    }
+  const applyInlineFormat = (
+    property: 'fontFamily' | 'color' | 'backgroundColor' | 'fontWeight' | 'fontStyle',
+    value: string,
+  ) => {
+    const target = resolveEditor();
+    const selection = window.getSelection();
+    if (!target || !selection) return;
+    const { editor, range } = target;
 
-    const range = savedRange.cloneRange();
-    // 字体 / 字号：清除选区内同名旧值后重新包裹，避免嵌套造成样式叠加
-    clearInlineProperty(editor, range, property);
-
-    const collapsed = range.collapsed;
-    const span = window.document.createElement('span');
-    if (property === 'fontSize') {
-      const baseSize = getBaseFontSize();
-      const editorSize = Number.parseFloat(window.getComputedStyle(editor).fontSize) || baseSize;
-      span.style.fontSize = `${Number.parseFloat(value) / editorSize}em`;
-    } else {
-      span.style[property] = value;
-    }
-    const nextRange = window.document.createRange();
-    if (collapsed) {
-      range.insertNode(span);
-      nextRange.setStart(span, 0);
-      nextRange.collapse(true);
-    } else {
-      span.append(range.extractContents());
-      range.insertNode(span);
-      nextRange.selectNodeContents(span);
-    }
-    selection.removeAllRanges();
-    selection.addRange(nextRange);
-    selectionRef.current = nextRange.cloneRange();
+    pushUndo();
     editor.focus();
-    const index = Number(editor.dataset.cellIndex);
-    updateCell(index, { text: editor.innerHTML });
-    markCellModified(index);
-    readSelectionFormat();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    window.document.execCommand('styleWithCSS', false, 'true');
+    if (property === 'color') window.document.execCommand('foreColor', false, value);
+    else if (property === 'backgroundColor') {
+      window.document.execCommand('hiliteColor', false, value === 'var(--cell-bg)' ? 'transparent' : value);
+    } else if (property === 'fontWeight') window.document.execCommand('bold');
+    else if (property === 'fontStyle') window.document.execCommand('italic');
+    else window.document.execCommand('fontName', false, value);
+
+    const currentSelection = window.getSelection();
+    if (currentSelection?.rangeCount) selectionRef.current = currentSelection.getRangeAt(0).cloneRange();
+    queueContentUpdate(Number(editor.dataset.cellIndex), editor, true, true);
+    readSelectionFormatRef.current();
+    if (!pinnedRef.current) scheduleCaretFade();
   };
 
   const changeFontStep = (delta: number) => {
-    const current = fontStepRef.current;
-    const newStep = Math.max(-MAX_FONT_STEP, Math.min(MAX_FONT_STEP, current + delta));
-    if (newStep === current) return;
-    fontStepRef.current = newStep;
-    setSelectedFormat((format) => ({ ...format, fontStep: newStep }));
-    const targetSize = getBaseFontSize(settings.fontSize) + newStep * FONT_STEP_SIZE;
-    applyInlineFormat('fontSize', `${targetSize}px`);
+    const target = resolveEditor();
+    const selection = window.getSelection();
+    if (!target || !selection) return;
+    const { editor, range: savedRange } = target;
+
+    const editorBase = Number.parseFloat(window.getComputedStyle(editor).fontSize) || getBaseFontSize();
+    const maxSize = getBaseFontSize() + MAX_FONT_STEP * FONT_STEP_SIZE;
+
+    const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    const plans: { node: Text; size: number }[] = [];
+    let textNode = walker.nextNode();
+    let anyChanged = false;
+    while (textNode) {
+      const current = textNode as Text;
+      if (savedRange.intersectsNode(current) && (current.textContent ?? '').trim().length > 0) {
+        const host = current.parentElement ?? editor;
+        const px = Number.parseFloat(window.getComputedStyle(host).fontSize) || editorBase;
+        const nextSize = Math.min(maxSize, Math.max(MIN_FONT_SIZE, px + delta * FONT_STEP_SIZE));
+        if (Math.abs(nextSize - px) > 0.05) anyChanged = true;
+        plans.push({ node: current, size: nextSize });
+      }
+      textNode = walker.nextNode();
+    }
+    if (!plans.length || !anyChanged) return;
+
+    pushUndo();
+    const offsets = saveOffsets(editor, savedRange);
+    unwrapSizeSpans(editor, savedRange);
+    plans.forEach(({ node, size }) => {
+      const parent = node.parentNode;
+      if (!parent) return;
+      const span = window.document.createElement('span');
+      span.style.fontSize = `${size / editorBase}em`;
+      parent.insertBefore(span, node);
+      span.appendChild(node);
+    });
+    const restored = restoreOffsets(editor, offsets.start, offsets.end);
+    selection.removeAllRanges();
+    selection.addRange(restored);
+    selectionRef.current = restored.cloneRange();
+
+    queueContentUpdate(Number(editor.dataset.cellIndex), editor, true, true);
+    readSelectionFormatRef.current();
+    if (!pinnedRef.current) scheduleCaretFade();
   };
 
   const applyBold = () => {
+    setSelectedFormat((current) => ({ ...current, bold: !current.bold }));
     applyInlineFormat('fontWeight', selectedFormat.bold ? '400' : '700');
   };
 
   const applyItalic = () => {
+    setSelectedFormat((current) => ({ ...current, italic: !current.italic }));
     applyInlineFormat('fontStyle', selectedFormat.italic ? 'normal' : 'italic');
   };
 
   const toggleHighlight = () => {
-    // 优化高光：已高亮则取消（恢复单元格背景色），否则应用当前主题的高光色
     applyInlineFormat('backgroundColor', selectedFormat.highlighted ? 'var(--cell-bg)' : HIGHLIGHT_COLORS[settings.theme]);
+  };
+
+  const applyColor = (color: string) => {
+    setSelectedFormat((current) => ({ ...current, textColor: color }));
+    applyInlineFormat('color', color);
+  };
+
+  const applyFontFamily = (family: string) => {
+    setSelectedFormat((current) => ({ ...current, font: family }));
+    applyInlineFormat('fontFamily', family);
   };
 
   const toggleTheme = () => {
     const from: Theme = settings.theme;
     const to: Theme = from === 'dark' ? 'light' : 'dark';
     const mapping = buildColorMapping(from, to);
-    // 高光颜色映射：任意主题（含历史）的高光都切到目标主题的高光色
     const highlightMapping: Record<string, string> = {
       [HIGHLIGHT_COLORS.dark]: HIGHLIGHT_COLORS[to],
       [HIGHLIGHT_COLORS.light]: HIGHLIGHT_COLORS[to],
@@ -675,7 +802,7 @@ function App() {
       '#58d9e6': HIGHLIGHT_COLORS[to],
     };
     const surfaces = THEME_SURFACES[to];
-    // 把每个单元格富文本中的字体颜色与高光颜色按预设对应改写
+    pushUndo();
     setDocument((current) => ({
       ...current,
       cells: current.cells.map((cell) => cell.text
@@ -698,7 +825,6 @@ function App() {
     }));
   };
 
-  /** 切换历史记录开关：开启时立即写入当天快照，关闭时删除当天文件。 */
   const toggleHistory = async () => {
     const next = !historyEnabled;
     setHistoryBusy(true);
@@ -714,28 +840,28 @@ function App() {
   };
 
   const exportImage = async () => {
-    if (!gridRef.current) return;
+    if (!gridRef.current || exporting) return;
     setExporting(true);
     try {
       const { toPng } = await import('html-to-image');
-      // 收集用到的字体族，交给主进程读成 data URL 内嵌；否则 file:// 下字体加载失败会回退到微软雅黑
       const used = new Set<string>([settings.font]);
       gridRef.current.querySelectorAll<HTMLElement>('[style*="font-family"]').forEach((element) => {
-        const matched = fontOptions.find((option) => element.style.fontFamily.includes(option.family));
+        const matched = fontsRef.current.find((option) => element.style.fontFamily.includes(option.family));
         if (matched) used.add(matched.family);
       });
       let fontEmbedCSS = '';
       try {
-        fontEmbedCSS = await buildFontEmbedCSS(used);
+        fontEmbedCSS = buildFontEmbedCSS(used);
       } catch (error) {
         console.error('Font embedding failed', error);
       }
-      const dataUrl = await toPng(gridRef.current, {
+      const raw = await toPng(gridRef.current, {
         pixelRatio: 2,
         backgroundColor: settings.background,
         ...(fontEmbedCSS ? { fontEmbedCSS } : {}),
         cacheBust: true,
       });
+      const dataUrl = await appendFooterBar(raw, settings.theme);
       const anchor = window.document.createElement('a');
       anchor.download = `屏上作业-${new Date().toISOString().slice(0, 10)}.png`;
       anchor.href = dataUrl;
@@ -810,7 +936,7 @@ function App() {
                     if (pending) window.cancelAnimationFrame(pending);
                     const baseSize = getBaseFontSize();
                     fitFramesRef.current.set(editor, window.requestAnimationFrame(() => fitEditor(editor, baseSize)));
-                    readSelectionFormat();
+                    readSelectionFormatRef.current();
                   }}
                   onFocus={readSelectionFormat}
                   onKeyUp={readSelectionFormat}
@@ -841,29 +967,29 @@ function App() {
 
       {toolbarVisible && <div
         ref={formatToolbarRef}
-        className={`selection-toolbar ${toolbarPosition.side}`}
+        className={`selection-toolbar ${toolbarPosition.side} ${toolbarFading ? 'fading' : ''} ${toolbarPinned ? 'pinned' : 'caret'}`}
         style={{ left: toolbarPosition.left, top: toolbarPosition.top }}
         role="toolbar"
-        aria-label="选中文字格式"
-        onPointerDownCapture={() => { toolbarPointerRef.current = true; }}
+        aria-label="文字格式"
+        onPointerDownCapture={() => {
+          toolbarPointerRef.current = true;
+          if (!pinnedRef.current) scheduleCaretFade();
+        }}
         onPointerUpCapture={() => window.setTimeout(() => { toolbarPointerRef.current = false; }, 120)}
       >
         <div className="selection-toolbar-row text-controls-row">
           <label className="floating-select font-select" title="字体">
             <span className="floating-caption">字体</span>
             <span className="floating-value">{fontLabel(selectedFormat.font)}</span>
-            <select className="select-hit-area" aria-label="选中文字字体" value={selectedFormat.font} onChange={(event) => {
-              setSelectedFormat((current) => ({ ...current, font: event.target.value }));
-              applyInlineFormat('fontFamily', fontStack(event.target.value));
-            }}>
-              {fontOptions.map((option) => <option key={option.family} value={option.family}>{option.label}</option>)}
+            <select className="select-hit-area" aria-label="文字字体" value={selectedFormat.font} onChange={(event) => applyFontFamily(event.target.value)}>
+              {fonts.map((option) => <option key={option.family} value={option.family}>{option.label}</option>)}
             </select>
           </label>
-          <div className="font-size-controls" title="字号调整">
+          <div className="font-size-controls" title="字号调整（各段文字分别加减一号）">
             <span className="floating-caption">字号</span>
-            <button className="font-size-btn" aria-label="减小字号" title="减小字号" onMouseDown={(event) => event.preventDefault()} onClick={() => changeFontStep(-1)} disabled={selectedFormat.fontStep <= -MAX_FONT_STEP}>A−</button>
+            <button className="font-size-btn" aria-label="减小字号" title="减小字号" onMouseDown={(event) => event.preventDefault()} onClick={() => changeFontStep(-1)}>A−</button>
             <span className="font-step-value">{selectedFormat.fontStep === 0 ? '标准' : selectedFormat.fontStep > 0 ? `+${selectedFormat.fontStep}` : `${selectedFormat.fontStep}`}</span>
-            <button className="font-size-btn" aria-label="增大字号" title="增大字号" onMouseDown={(event) => event.preventDefault()} onClick={() => changeFontStep(1)} disabled={selectedFormat.fontStep >= MAX_FONT_STEP}>A+</button>
+            <button className="font-size-btn" aria-label="增大字号" title="增大字号" onMouseDown={(event) => event.preventDefault()} onClick={() => changeFontStep(1)}>A+</button>
           </div>
         </div>
         <div className="selection-toolbar-row style-controls-row">
@@ -877,11 +1003,18 @@ function App() {
               title={color}
               aria-label={`字体颜色 ${color}`}
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                setSelectedFormat((current) => ({ ...current, textColor: color }));
-                applyInlineFormat('color', color);
-              }}
+              onClick={() => applyColor(color)}
             />)}
+          </div>
+          <div className="floating-picker" title="更多颜色">
+            <span className="picker-swatch" style={{ backgroundColor: selectedFormat.textColor }} />
+            <input
+              className="picker-input"
+              type="color"
+              aria-label="自定义字体颜色"
+              value={selectedFormat.textColor.startsWith('#') ? selectedFormat.textColor : '#ffffff'}
+              onChange={(event) => applyColor(event.target.value)}
+            />
           </div>
           <div className="floating-highlight" aria-label="高光设置">
             <button
@@ -925,8 +1058,15 @@ function App() {
             <span className="history-switch" aria-hidden="true"><span className="history-knob" /></span>
             <span className="history-label">记录</span>
           </label>
-          <button className="export-button" title="导出 PNG 图片" onClick={() => void exportImage()} disabled={exporting}>
-            <span aria-hidden="true">↧</span><span>{exporting ? '导出中' : '导出图片'}</span>
+          <button
+            className={`export-button ${exporting ? 'exporting' : ''}`}
+            title="导出 PNG 图片"
+            onClick={() => void exportImage()}
+            disabled={exporting}
+          >
+            {exporting
+              ? <><span className="spinner" aria-hidden="true" /><span>导出中</span></>
+              : <><span aria-hidden="true">↧</span><span>导出图片</span></>}
           </button>
         </div>
       </footer>
@@ -941,6 +1081,7 @@ function App() {
           </div>
           <dl className="about-details">
             <div><dt>版本</dt><dd>v{VERSION} · {BUILD_DATE}</dd></div>
+            <div><dt>字体</dt><dd>{fonts.length} 个（来自 fonts/ 目录）</dd></div>
             <div><dt>项目地址</dt><dd><a href="https://github.com/RobertLau2480/SchoolworkOnScreen" target="_blank" rel="noreferrer">https://github.com/RobertLau2480/SchoolworkOnScreen</a></dd></div>
             <div><dt>作者</dt><dd>OctSeventh（RobertLau）</dd></div>
           </dl>

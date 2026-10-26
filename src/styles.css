@@ -92,8 +92,11 @@ button { color: inherit; }
 }
 .cell-editor:empty::before { content: attr(data-placeholder); color: #aab5b7; pointer-events: none; }
 .cell-editor:focus { box-shadow: inset 0 0 0 2px rgba(24, 143, 137, .18); }
+/* 解锁：表框本身显示为虚线 */
 .is-unlocked .homework-cell {
-  outline: 1px dashed rgba(24, 143, 137, .24);
+  border-style: dashed;
+  border-color: rgba(24, 143, 137, .55);
+  outline: none;
   overflow: visible;
 }
 .resize-handle {
@@ -173,8 +176,18 @@ button { color: inherit; }
 .surface-swatch { width: 19px; height: 19px; border: 1px solid #cbd5d6; }
 .export-button { height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 13px; border: 0; background: #198d87; color: white; font-size: 12px; white-space: nowrap; cursor: pointer; }
 .export-button:hover { background: #117a75; }
-.export-button:disabled { opacity: .55; cursor: wait; }
+.export-button:disabled { cursor: wait; }
 .export-button > span:first-child { font-size: 20px; line-height: 1; }
+/* 导出中：橙色 + 旋转指示器 */
+.export-button.exporting { background: #d98218; color: #ffffff; opacity: 1; }
+.export-button .spinner {
+  width: 15px; height: 15px; flex: 0 0 15px;
+  border: 2px solid rgba(255, 255, 255, .35);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: swos-spin .7s linear infinite;
+}
+@keyframes swos-spin { to { transform: rotate(360deg); } }
 .theme-button { height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 14px; border: 1px solid #3b4a51; background: #202b31; color: #dce6e8; font-size: 12px; white-space: nowrap; cursor: pointer; }
 .theme-button:hover { background: #2b3b42; border-color: #52656d; }
 .theme-button .theme-icon { font-size: 17px; line-height: 1; }
@@ -774,3 +787,68 @@ button { color: inherit; }
 [data-theme='light'] .history-toggle.on .history-knob { background: #ffffff; }
 [data-theme='light'] .history-label { color: #7d8d87; }
 [data-theme='light'] .history-toggle.on .history-label { color: #16857f; }
+
+/* ===== v1.3.0 新增 ===== */
+
+/* 解锁时表框虚线：修正各主题下的颜色 */
+.is-unlocked .homework-cell {
+  border-style: dashed;
+  border-color: rgba(69, 183, 176, .6);
+  outline: none;
+}
+[data-theme='light'] .is-unlocked .homework-cell {
+  border-color: rgba(24, 143, 137, .55);
+  outline: none;
+}
+
+/* 样式菜单：光标触发（淡出）与选区触发（常驻） */
+.selection-toolbar.fading {
+  opacity: 0;
+  transition: opacity .32s ease;
+  pointer-events: none;
+}
+.selection-toolbar.caret {
+  border-style: dashed;
+  border-color: rgba(91, 197, 189, .55);
+}
+[data-theme='light'] .selection-toolbar.caret {
+  border-color: rgba(22, 133, 127, .45);
+}
+
+/* 调色盘：原生取色器叠在色块上 */
+.floating-picker {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  background: #29373d;
+  border: 1px solid #46575e;
+  overflow: hidden;
+  cursor: pointer;
+}
+.floating-picker:hover { border-color: #75b9b5; }
+.picker-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .5);
+  pointer-events: none;
+}
+.picker-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+  color-scheme: dark;
+}
+.selection-toolbar .floating-picker { width: 28px; height: 28px; }
+.selection-toolbar .picker-swatch { width: 15px; height: 15px; }
+[data-theme='light'] .floating-picker { background: #f2f6f4; border-color: #d5ded9; }
+[data-theme='light'] .picker-swatch { border-color: rgba(0, 0, 0, .28); }
+[data-theme='light'] .picker-input { color-scheme: light; }
