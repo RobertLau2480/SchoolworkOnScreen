@@ -1,38 +1,57 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, powerSaveBlocker, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, nativeTheme, powerSaveBlocker, protocol, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+
+// 字体通过自定义协议直接从磁盘读取，避免每次启动把几十 MB 字体转成 base64 传给渲染进程。
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'swos-font', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
+]);
 
 let mainWindow: BrowserWindow | null = null;
 let blockerId: number | null = null;
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
-/** 字体文件 base64 缓存，避免重复读取。 */
+/** 字体文件 base64 缓存，避免导出图片时重复读取。 */
 const fontDataUrlCache = new Map<string, string>();
 
-/** 将渲染进程给出的字体 URL 解析为磁盘路径。 */
-function resolveFontPath(url: string): string | null {
-  const clean = decodeURIComponent(url.split('?')[0].split('#')[0]);
-  if (!clean) return null;
-  const rendererRoot = app.isPackaged ? path.join(__dirname, '../renderer') : app.getAppPath();
-  const candidates = [
-    path.isAbsolute(clean) ? clean : path.join(rendererRoot, clean.replace(/^\.\//, '')),
-    path.join(app.getAppPath(), clean.replace(/^\//, '')),
-    path.join(app.getAppPath(), 'fonts', path.basename(clean)),
-  ];
-  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+const FONT_EXTENSIONS = new Set(['.woff2', '.woff', '.ttf', '.otf']);
+/** 单次返回字体数量上限，避免异常目录拖慢启动 */
+const MAX_FONTS = 200;
+
+/** 用户可增减字体的目录：打包后位于 EXE 旁的 fonts/，开发时位于项目根 fonts/。 */
+function userFontDirectory(): string {
+  if (app.isPackaged) {
+    const directory = process.env.PORTABLE_EXECUTABLE_DIR ?? path.dirname(process.execPath);
+    return path.join(directory, 'fonts');
+  }
+  return path.join(app.getAppPath(), 'fonts');
 }
 
-/** 把字体文件读成 data URL，供导出 PNG 时内嵌（避免 file:// 无法 fetch）。 */
+/** 按扩展名推断 MIME 类型。 */
+function fontMime(file: string): string {
+  const extension = path.extname(file).toLowerCase();
+  if (extension === '.woff2') return 'font/woff2';
+  if (extension === '.woff') return 'font/woff';
+  if (extension === '.otf') return 'font/otf';
+  return 'font/ttf';
+}
+
+/** 把 swos-font:// URL 解析为磁盘路径。 */
+function resolveFontUrl(url: string): string | null {
+  const raw = url.slice(url.indexOf('//') + 2);
+  const name = decodeURIComponent(raw.slice(raw.indexOf('/') + 1).split('?')[0].split('#')[0]);
+  if (!name) return null;
+  const target = path.join(userFontDirectory(), path.basename(name));
+  if (!FONT_EXTENSIONS.has(path.extname(target).toLowerCase())) return null;
+  return fs.existsSync(target) ? target : null;
+}
+
+/** 把字体读成 data URL，供导出 PNG 时内嵌（避免 file:// 无法 fetch）。 */
 function fontDataUrl(url: string): string | null {
   const cached = fontDataUrlCache.get(url);
   if (cached) return cached;
-  const file = resolveFontPath(url);
+  const file = resolveFontUrl(url);
   if (!file) return null;
-  const extension = path.extname(file).toLowerCase();
-  const mime = extension === '.woff2' ? 'font/woff2'
-    : extension === '.woff' ? 'font/woff'
-      : extension === '.ttf' || extension === '.ttc' ? 'font/ttf'
-        : 'font/otf';
-  const dataUrl = `data:${mime};base64,${fs.readFileSync(file).toString('base64')}`;
+  const dataUrl = `data:${fontMime(file)};base64,${fs.readFileSync(file).toString('base64')}`;
   fontDataUrlCache.set(url, dataUrl);
   return dataUrl;
 }
@@ -106,6 +125,7 @@ function createWindow(): void {
     minHeight: 560,
     frame: false,
     show: false,
+    title: '屏上作业',
     backgroundColor: '#29332f',
     autoHideMenuBar: true,
     webPreferences: {
@@ -118,6 +138,25 @@ function createWindow(): void {
 
   mainWindow.maximize();
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  // 右键菜单：可编辑区域提供撤销/重做/剪切/复制/粘贴/全选；选中文字时提供复制。
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const items: Electron.MenuItemConstructorOptions[] = [];
+    if (params.isEditable) {
+      items.push(
+        { label: '撤销', role: 'undo', enabled: params.editFlags.canUndo },
+        { label: '重做', role: 'redo', enabled: params.editFlags.canRedo },
+        { type: 'separator' },
+        { label: '剪切', role: 'cut', enabled: params.editFlags.canCut },
+        { label: '复制', role: 'copy', enabled: params.editFlags.canCopy },
+        { label: '粘贴', role: 'paste', enabled: params.editFlags.canPaste },
+        { label: '全选', role: 'selectAll' },
+      );
+    } else if (params.selectionText.trim()) {
+      items.push({ label: '复制', role: 'copy' }, { label: '全选', role: 'selectAll' });
+    }
+    if (!items.length) return;
+    Menu.buildFromTemplate(items).popup({ window: mainWindow ?? undefined });
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url === 'https://github.com/RobertLau2480/SchoolworkOnScreen') void shell.openExternal(url);
     return { action: 'deny' };
@@ -131,6 +170,25 @@ function createWindow(): void {
 
   if (app.isPackaged) void mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   else void mainWindow.loadURL('http://127.0.0.1:5173');
+}
+
+// 字体资源协议：swos-font://local/<文件名> → 用户字体目录。
+// 浏览器按需流式加载并缓存，启动时无需把几十 MB 字体转成 base64。
+// Electron 22 使用 registerBufferProtocol（protocol.handle 需要 v25+）。
+function registerFontProtocol(): void {
+  protocol.registerBufferProtocol('swos-font', (request, callback) => {
+    try {
+      const file = resolveFontUrl(request.url);
+      if (!file) {
+        callback({ error: -6 });
+        return;
+      }
+      callback({ mimeType: fontMime(file), data: fs.readFileSync(file) });
+    } catch (error) {
+      console.error('font protocol failed', error);
+      callback({ error: -2 });
+    }
+  });
 }
 
 ipcMain.handle('data:load', () => ({
@@ -148,7 +206,7 @@ ipcMain.handle('window:toggle-maximize', () => {
 });
 ipcMain.handle('window:close', () => mainWindow?.close());
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
-// 导出 PNG 时把字体转成 data URL 内嵌，避免 file:// 协议无法 fetch 导致字体丢失。
+// 导出 PNG 时把字体转成 data URL 内嵌，避免非 http 协议无法 fetch 导致字体丢失。
 ipcMain.handle('fonts:data-urls', (_event, urls: string[]) => {
   const result: Record<string, string> = {};
   urls.forEach((url) => {
@@ -158,39 +216,9 @@ ipcMain.handle('fonts:data-urls', (_event, urls: string[]) => {
   return result;
 });
 
-/** 用户可增减字体的目录：打包后位于 EXE 旁的 fonts/，开发时位于项目根 fonts/。 */
-function userFontDirectory(): string {
-  if (app.isPackaged) {
-    const directory = process.env.PORTABLE_EXECUTABLE_DIR ?? path.dirname(process.execPath);
-    return path.join(directory, 'fonts');
-  }
-  return path.join(app.getAppPath(), 'fonts');
-}
-
-const FONT_EXTENSIONS = new Set(['.woff2', '.woff', '.ttf', '.otf']);
-/** 单次返回字体数量上限，避免异常目录拖慢启动 */
-const MAX_FONTS = 200;
-
-/** 按扩展名推断 MIME 类型。 */
-function fontMime(file: string): string {
-  const extension = path.extname(file).toLowerCase();
-  if (extension === '.woff2') return 'font/woff2';
-  if (extension === '.woff') return 'font/woff';
-  if (extension === '.otf') return 'font/otf';
-  return 'font/ttf';
-}
-
-/** 把磁盘字体文件读成 data URL，读取失败返回 null。 */
-function readFontDataUrl(file: string): string | null {
-  try {
-    return `data:${fontMime(file)};base64,${fs.readFileSync(file).toString('base64')}`;
-  } catch (error) {
-    console.error('read font failed', file, error);
-    return null;
-  }
-}
-
 // 每次启动扫描一次用户字体目录，用户增删字体后重启即可生效。
+// 只返回轻量元数据 + 协议 URL，字体本体由 swos-font:// 按需从磁盘读取，
+// 避免启动时把几十 MB 字体转成 base64 经 IPC 传输（这是之前启动慢的根因）。
 ipcMain.handle('fonts:list', () => {
   const directory = userFontDirectory();
   if (!fs.existsSync(directory)) {
@@ -205,17 +233,11 @@ ipcMain.handle('fonts:list', () => {
     return fs.readdirSync(directory, { withFileTypes: true })
       .filter((entry) => entry.isFile() && FONT_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
       .slice(0, MAX_FONTS)
-      .map((entry) => {
-        const file = path.join(directory, entry.name);
-        const dataUrl = readFontDataUrl(file);
-        if (!dataUrl) return null;
-        return {
-          label: decodeURIComponent(entry.name.replace(/\.[^.]+$/, '')),
-          mime: fontMime(file),
-          dataUrl,
-        };
-      })
-      .filter((item): item is { label: string; mime: string; dataUrl: string } => item !== null);
+      .map((entry) => ({
+        label: decodeURIComponent(entry.name.replace(/\.[^.]+$/, '')),
+        url: `swos-font://local/${encodeURIComponent(entry.name)}`,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'zh-Hans-CN'));
   } catch (error) {
     console.error('fonts:list failed', error);
     return [];
@@ -266,7 +288,10 @@ if (!hasSingleInstanceLock) {
     mainWindow.show();
     mainWindow.focus();
   });
-  app.whenReady().then(createWindow);
+  app.whenReady().then(() => {
+    registerFontProtocol();
+    createWindow();
+  });
   app.on('window-all-closed', () => app.quit());
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

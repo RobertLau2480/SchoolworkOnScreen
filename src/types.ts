@@ -40,7 +40,7 @@ declare global {
       isMaximized: () => Promise<boolean>;
       confirmLayout: (message: string) => Promise<boolean>;
       fontDataUrls: (urls: string[]) => Promise<Record<string, string>>;
-      listFonts: () => Promise<{ label: string; mime: string; dataUrl: string }[]>;
+      listFonts: () => Promise<{ label: string; url: string }[]>;
       setNativeTheme: (theme: string) => Promise<void>;
       saveHistory: (payload: { date: string; html: string; enabled: boolean }) => Promise<boolean>;
     };

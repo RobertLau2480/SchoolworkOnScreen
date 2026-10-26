@@ -22,7 +22,8 @@ const THEME_SURFACES: Record<Theme, { background: string; frame: string; textCol
   light: { background: '#eef1ee', frame: '#ffffff', textColor: '#000000' },
 };
 
-const HIGHLIGHT_COLORS: Record<Theme, string> = { dark: '#b85c1e', light: '#fff176' };
+// 深色模式用深棕色高光（深底上更柔和），浅色模式用亮黄
+const HIGHLIGHT_COLORS: Record<Theme, string> = { dark: '#5a3a1e', light: '#fff176' };
 const LEGACY_HIGHLIGHT_COLORS = ['#087f80', '#58d9e6'];
 const VERSION = '1.3.0';
 const BUILD_DATE = '2026年10月26日';
@@ -32,8 +33,10 @@ const FADE_DURATION = 320;
 
 const FONT_SIZES = { small: 26, medium: 30, large: 34 } as const;
 const FONT_STEP_SIZE = 2;
-const MAX_FONT_STEP = 5;
-const MIN_FONT_SIZE = 14;
+/** 允许在基准字号上下各调整 8 号（±16px），最大字号 = 基准 + 16。 */
+const MAX_FONT_STEP = 8;
+/** 最小字号（px） */
+const MIN_FONT_SIZE = 18;
 
 const defaultSettings: AppSettings = {
   background: THEME_SURFACES.dark.background,
@@ -586,6 +589,11 @@ function App() {
       // 操作菜单期间不改变显示状态
       return;
     }
+    // 只有真正选中文字时才显示样式框；单纯点击光标不弹菜单。
+    if (!hasText) {
+      hideToolbar();
+      return;
+    }
 
     selectionRef.current = range.cloneRange();
 
@@ -596,12 +604,9 @@ function App() {
     selectionRectRef.current = rect;
     setToolbarFading(false);
     setToolbarVisible(true);
-    setToolbarPinned(hasText);
+    setToolbarPinned(true);
     setToolbarPosition({ left: rect.left + (rect.right - rect.left) / 2, top: rect.bottom + 10, side: 'below' });
-    if (hasText) clearCaretTimer();
-    else scheduleCaretFade();
-
-    if (!hasText) return;
+    clearCaretTimer();
 
     const computed = window.getComputedStyle(anchor ?? editor);
     const pixelSize = Number.parseFloat(computed.fontSize);
@@ -729,21 +734,67 @@ function App() {
     const editorBase = Number.parseFloat(window.getComputedStyle(editor).fontSize) || getBaseFontSize();
     const maxSize = getBaseFontSize() + MAX_FONT_STEP * FONT_STEP_SIZE;
 
-    const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
-    const plans: { node: Text; size: number }[] = [];
-    let textNode = walker.nextNode();
-    let anyChanged = false;
-    while (textNode) {
-      const current = textNode as Text;
-      if (savedRange.intersectsNode(current) && (current.textContent ?? '').trim().length > 0) {
-        const host = current.parentElement ?? editor;
-        const px = Number.parseFloat(window.getComputedStyle(host).fontSize) || editorBase;
-        const nextSize = Math.min(maxSize, Math.max(MIN_FONT_SIZE, px + delta * FONT_STEP_SIZE));
-        if (Math.abs(nextSize - px) > 0.05) anyChanged = true;
-        plans.push({ node: current, size: nextSize });
+    // 只处理「被选区完整或部分覆盖」的文本节点；部分覆盖时先按选区边界切分，
+    // 确保选区外的文字不会被连带改变字号。
+    const collect = (): { node: Text; size: number }[] => {
+      const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+      const result: { node: Text; size: number }[] = [];
+      let textNode = walker.nextNode();
+      while (textNode) {
+        const current = textNode as Text;
+        if (savedRange.intersectsNode(current) && (current.textContent ?? '').trim().length > 0) {
+          const host = current.parentElement ?? editor;
+          const px = Number.parseFloat(window.getComputedStyle(host).fontSize) || editorBase;
+          result.push({ node: current, size: Math.min(maxSize, Math.max(MIN_FONT_SIZE, px + delta * FONT_STEP_SIZE)) });
+        }
+        textNode = walker.nextNode();
       }
-      textNode = walker.nextNode();
-    }
+      return result;
+    };
+
+    // 先切分被选区部分覆盖的文本节点
+    const splitEdges = () => {
+      editor.querySelectorAll<HTMLElement>('*').forEach(() => undefined);
+      const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+      const targets: Text[] = [];
+      let node = walker.nextNode();
+      while (node) {
+        const text = node as Text;
+        if (savedRange.intersectsNode(text) && (text.textContent ?? '').length > 0) targets.push(text);
+        node = walker.nextNode();
+      }
+      targets.forEach((text) => {
+        const content = text.textContent ?? '';
+        // 找到该文本节点相对选区的起止字符位置
+        let startInNode = 0;
+        let endInNode = content.length;
+        if (savedRange.startContainer === text) startInNode = savedRange.startOffset;
+        else if (savedRange.startContainer !== text) {
+          const pre = window.document.createRange();
+          pre.selectNodeContents(editor);
+          pre.setEnd(text, 0);
+          startInNode = savedRange.compareBoundaryPoints(Range.START_TO_START, pre) > 0 ? 0 : 0;
+        }
+        if (savedRange.endContainer === text) endInNode = savedRange.endOffset;
+        if (startInNode <= 0 && endInNode >= content.length) return;
+        // 只保留选区内的部分为可改动片段：切出 前/中/后 三段
+        const parent = text.parentNode;
+        if (!parent) return;
+        if (endInNode < content.length) {
+          text.splitText(endInNode);
+        }
+        if (startInNode > 0) {
+          text.splitText(startInNode);
+        }
+      });
+    };
+    splitEdges();
+
+    const plans = collect();
+    const anyChanged = plans.some(({ node, size }) => {
+      const px = Number.parseFloat(window.getComputedStyle(node.parentElement ?? editor).fontSize) || editorBase;
+      return Math.abs(size - px) > 0.05;
+    });
     if (!plans.length || !anyChanged) return;
 
     pushUndo();
@@ -778,7 +829,31 @@ function App() {
   };
 
   const toggleHighlight = () => {
-    applyInlineFormat('backgroundColor', selectedFormat.highlighted ? 'var(--cell-bg)' : HIGHLIGHT_COLORS[settings.theme]);
+    // 以 DOM 实际状态为准：选区内只要还有高光视为「已高亮」，本次点击即取消高光。
+    const target = resolveEditor();
+    let isHighlighted = false;
+    if (target) {
+      const { editor, range } = target;
+      const anchor = range.startContainer.nodeType === Node.ELEMENT_NODE
+        ? range.startContainer as HTMLElement
+        : range.startContainer.parentElement;
+      for (let element = anchor; element && element !== editor; element = element.parentElement) {
+        const background = element.style.backgroundColor;
+        if (background) {
+          const color = cssColorToHex(background);
+          if (
+            color === HIGHLIGHT_COLORS.dark
+            || color === HIGHLIGHT_COLORS.light
+            || LEGACY_HIGHLIGHT_COLORS.includes(color)
+          ) {
+            isHighlighted = true;
+            break;
+          }
+        }
+      }
+    }
+    setSelectedFormat((current) => ({ ...current, highlighted: !isHighlighted }));
+    applyInlineFormat('backgroundColor', isHighlighted ? 'var(--cell-bg)' : HIGHLIGHT_COLORS[settings.theme]);
   };
 
   const applyColor = (color: string) => {
@@ -851,7 +926,7 @@ function App() {
       });
       let fontEmbedCSS = '';
       try {
-        fontEmbedCSS = buildFontEmbedCSS(used);
+        fontEmbedCSS = await buildFontEmbedCSS(used);
       } catch (error) {
         console.error('Font embedding failed', error);
       }
@@ -892,7 +967,11 @@ function App() {
         <div className="startup-message">加载中</div>
       </div>}
       <header className="titlebar">
-        <div className="brand"><img className="brand-icon" src={appIcon} alt="" /><span className="brand-name">屏上作业</span><span className="brand-en">SCHOOLWORK ON SCREEN</span></div>
+        <div className="brand">
+          <img className="brand-icon" src={appIcon} alt="" />
+          <span className="brand-name">屏上作业</span>
+          <span className="brand-en">SchoolworkOnScreen</span>
+        </div>
         <div className="window-actions">
           <button aria-label="最小化" title="最小化" onClick={() => void window.schoolwork.minimize()}>−</button>
           <button aria-label="最大化" title="最大化" onClick={() => void window.schoolwork.toggleMaximize().then(setMaximized)}>{maximized ? '❐' : '□'}</button>
@@ -988,7 +1067,6 @@ function App() {
           <div className="font-size-controls" title="字号调整（各段文字分别加减一号）">
             <span className="floating-caption">字号</span>
             <button className="font-size-btn" aria-label="减小字号" title="减小字号" onMouseDown={(event) => event.preventDefault()} onClick={() => changeFontStep(-1)}>A−</button>
-            <span className="font-step-value">{selectedFormat.fontStep === 0 ? '标准' : selectedFormat.fontStep > 0 ? `+${selectedFormat.fontStep}` : `${selectedFormat.fontStep}`}</span>
             <button className="font-size-btn" aria-label="增大字号" title="增大字号" onMouseDown={(event) => event.preventDefault()} onClick={() => changeFontStep(1)}>A+</button>
           </div>
         </div>
@@ -1034,8 +1112,12 @@ function App() {
           <button className="about-button" onClick={() => setAboutOpen(true)}>关于</button>
           <span className="version-tag">v{VERSION}</span>
           <div className="edit-actions" role="group" aria-label="撤销与重做">
-            <button className="edit-btn" title="撤销 (Ctrl+Z)" aria-label="撤销" onClick={undo} disabled={!canUndo}>↶</button>
-            <button className="edit-btn" title="重做 (Ctrl+Y)" aria-label="重做" onClick={redo} disabled={!canRedo}>↷</button>
+            <button className="edit-btn" title="撤销 (Ctrl+Z)" onClick={undo} disabled={!canUndo}>
+              <span aria-hidden="true">↶</span><span>撤销</span>
+            </button>
+            <button className="edit-btn" title="重做 (Ctrl+Y)" onClick={redo} disabled={!canRedo}>
+              <span aria-hidden="true">↷</span><span>重做</span>
+            </button>
           </div>
         </div>
         <div className="table-tools" aria-label="表格控制">

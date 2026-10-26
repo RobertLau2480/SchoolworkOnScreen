@@ -1,6 +1,6 @@
 {
   "name": "schoolwork-on-screen",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "private": false,
   "description": "屏上作业 - A touch-friendly homework display for Windows",
   "main": "dist-electron/main.js",
@@ -40,8 +40,13 @@
     "files": [
       "renderer/**/*",
       "dist-electron/**/*",
-      "package.json"
+      "package.json",
+      "!**/*.map",
+      "!**/*.md",
+      "!**/LICENSE*",
+      "!**/LICENSES*"
     ],
+    "electronLanguages": ["zh-CN", "en-US"],
     "extraFiles": [
       {
         "from": "config.ini",
