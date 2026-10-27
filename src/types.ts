@@ -45,7 +45,6 @@ declare global {
       saveHistory: (payload: { date: string; html: string; enabled: boolean }) => Promise<boolean>;
       openHistory: () => Promise<boolean>;
       saveImage: (dataUrl: string, fileName: string) => Promise<boolean>;
-      showContextMenu: (payload: { editable: boolean; hasSelection: boolean }) => Promise<void>;
     };
   }
 }

@@ -15,5 +15,4 @@ contextBridge.exposeInMainWorld('schoolwork', {
   saveHistory: (payload: { date: string; html: string; enabled: boolean }) => ipcRenderer.invoke('history:save', payload),
   openHistory: () => ipcRenderer.invoke('history:open'),
   saveImage: (dataUrl: string, fileName: string) => ipcRenderer.invoke('image:save', dataUrl, fileName),
-  showContextMenu: (payload: { editable: boolean; hasSelection: boolean }) => ipcRenderer.invoke('menu:context', payload),
 });

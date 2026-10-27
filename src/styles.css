@@ -872,52 +872,38 @@ button { color: inherit; }
   border-color: #1a9d96;
 }
 
-/* 字号五档滑条 */
+/* 字号五档：从左到右逐级变大的直角三角形 */
 .font-size-controls {
-  gap: 6px;
+  gap: 7px;
   padding: 3px 10px;
 }
-.font-size-glyph {
-  color: #b8c9cd;
-  line-height: 1;
-  user-select: none;
+.font-size-steps {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 22px;
+  padding: 0 1px;
 }
-.font-size-glyph.small { font-size: 10px; }
-.font-size-glyph.large { font-size: 16px; font-weight: 700; }
-.font-size-slider {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 84px;
-  height: 4px;
-  margin: 0;
-  border-radius: 2px;
-  background: #3c4b52;
-  outline: none;
-  cursor: pointer;
-}
-.font-size-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: #45b7b0;
-  border: 2px solid #1b262a;
-  cursor: pointer;
-}
-.font-size-slider::-webkit-slider-thumb:hover { background: #5ecdc6; }
-.font-size-slider::-moz-range-thumb {
+.font-size-step {
   width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: #45b7b0;
-  border: 2px solid #1b262a;
+  padding: 0;
+  border: 0;
+  background: #455a63;
+  /* 直角三角形：右边竖直，斜边自左下升到右上 */
+  clip-path: polygon(0 100%, 100% 0, 100% 100%);
   cursor: pointer;
+  transition: background .12s ease;
 }
-[data-theme='light'] .font-size-glyph { color: #5c6d67; }
-[data-theme='light'] .font-size-slider { background: #d5ded9; }
-[data-theme='light'] .font-size-slider::-webkit-slider-thumb { background: #16857f; border-color: #ffffff; }
-[data-theme='light'] .font-size-slider::-moz-range-thumb { background: #16857f; border-color: #ffffff; }
+.font-size-step:nth-child(1) { height: 42%; }
+.font-size-step:nth-child(2) { height: 56%; }
+.font-size-step:nth-child(3) { height: 70%; }
+.font-size-step:nth-child(4) { height: 85%; }
+.font-size-step:nth-child(5) { height: 100%; }
+.font-size-step:hover { background: #6fc9c2; }
+.font-size-step.active { background: #45b7b0; }
+[data-theme='light'] .font-size-step { background: #c3d0cb; }
+[data-theme='light'] .font-size-step:hover { background: #7fc4be; }
+[data-theme='light'] .font-size-step.active { background: #16857f; }
 
 /* 每日存档：开关 + 文件夹链接 */
 .history-block {
@@ -980,3 +966,19 @@ button { color: inherit; }
 [data-theme='light'] .floating-picker { background: #f2f6f4; border-color: #d5ded9; }
 [data-theme='light'] .picker-swatch { border-color: rgba(0, 0, 0, .28); }
 [data-theme='light'] .picker-input { color-scheme: light; }
+
+/* ===== 导出中状态：任何主题下都必须是橙色（放在最后并提高特异性） ===== */
+.export-button.exporting,
+.export-button.exporting:hover,
+.export-button.exporting:disabled,
+[data-theme='light'] .export-button.exporting,
+[data-theme='light'] .export-button.exporting:hover,
+[data-theme='light'] .export-button.exporting:disabled,
+[data-theme='dark'] .export-button.exporting,
+[data-theme='dark'] .export-button.exporting:hover {
+  color: #ffffff;
+  background: #d98218;
+  background-color: #d98218;
+  opacity: 1;
+  cursor: wait;
+}

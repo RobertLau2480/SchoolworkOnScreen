@@ -25,7 +25,7 @@ const THEME_SURFACES: Record<Theme, { background: string; frame: string; textCol
 // 深色模式用深棕色高光（深底上更柔和），浅色模式用亮黄
 const HIGHLIGHT_COLORS: Record<Theme, string> = { dark: '#5a3a1e', light: '#fff176' };
 const LEGACY_HIGHLIGHT_COLORS = ['#087f80', '#58d9e6'];
-const VERSION = '1.3.1';
+const VERSION = '1.2.2';
 const BUILD_DATE = '2026年10月27日';
 const UNDO_LIMIT = 120;
 const CARET_TOOLBAR_LINGER = 5000;
@@ -678,26 +678,13 @@ function App() {
       }
       if (!gridRef.current?.contains(target)) hideToolbar();
     };
-    // 统一由渲染进程触发右键菜单，避免触屏长按 + 右键同时弹出两个原生菜单。
-    const handleContextMenu = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (!target) return;
-      const editor = target.closest<HTMLElement>('.cell-editor, input, textarea');
-      const isEditable = Boolean(editor);
-      const selection = window.getSelection();
-      const hasSelection = Boolean(selection && selection.toString().trim().length > 0);
-      // 只在编辑器 / 输入框或已有选中文字时接管，其它位置交给系统默认行为。
-      if (!isEditable && !hasSelection) return;
-      event.preventDefault();
-      void window.schoolwork.showContextMenu({ editable: isEditable, hasSelection });
-    };
+    // 右键菜单完全交给 Chromium 原生实现（主进程监听 context-menu 事件），
+    // 渲染进程不做任何拦截，避免触屏长按同时弹出两套菜单。
     window.document.addEventListener('selectionchange', handleSelectionChange);
     window.document.addEventListener('pointerdown', handlePointerDown, true);
-    window.document.addEventListener('contextmenu', handleContextMenu);
     return () => {
       window.document.removeEventListener('selectionchange', handleSelectionChange);
       window.document.removeEventListener('pointerdown', handlePointerDown, true);
-      window.document.removeEventListener('contextmenu', handleContextMenu);
     };
   }, []);
 
@@ -941,9 +928,14 @@ function App() {
 
   const exportImage = async () => {
     if (!gridRef.current || exporting) return;
-    // 先让按钮立刻进入「导出中」橙色状态，再开始耗时的图片生成。
+    // 先让按钮立刻进入「导出中」橙色状态（含转圈），再开始耗时的图片生成。
+    // 连续两帧 rAF：第一帧让 React 提交状态，第二帧确保样式已真正绘制到屏幕上。
     setExporting(true);
-    await new Promise((resolve) => window.requestAnimationFrame(() => resolve(null)));
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    });
     try {
       const { toPng } = await import('html-to-image');
       const used = new Set<string>([settings.font]);
@@ -1091,19 +1083,19 @@ function App() {
           </label>
           <div className="font-size-controls" title={`字号：${FONT_SIZE_LEVELS[selectedFormat.fontStep] ?? FONT_SIZE_LEVELS[DEFAULT_SIZE_LEVEL]}px`}>
             <span className="floating-caption">字号</span>
-            <span className="font-size-glyph small" aria-hidden="true">A</span>
-            <input
-              className="font-size-slider"
-              type="range"
-              min={0}
-              max={FONT_SIZE_LEVELS.length - 1}
-              step={1}
-              aria-label="字号"
-              value={selectedFormat.fontStep}
-              onMouseDown={(event) => event.preventDefault()}
-              onChange={(event) => applyFontSizeLevel(Number(event.target.value))}
-            />
-            <span className="font-size-glyph large" aria-hidden="true">A</span>
+            <div className="font-size-steps" role="group" aria-label="字号五档">
+              {FONT_SIZE_LEVELS.map((value, index) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`font-size-step ${selectedFormat.fontStep === index ? 'active' : ''}`}
+                  aria-label={`字号 ${value}px`}
+                  title={`${value}px`}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => applyFontSizeLevel(index)}
+                />
+              ))}
+            </div>
           </div>
         </div>
         <div className="selection-toolbar-row style-controls-row">
@@ -1177,7 +1169,7 @@ function App() {
               <span className="history-switch" aria-hidden="true"><span className="history-knob" /></span>
               <span className="history-label">每日存档</span>
             </label>
-            <button className="history-link" type="button" onClick={() => void window.schoolwork.openHistory()}>打开 history 文件夹</button>
+            <button className="history-link" type="button" onClick={() => void window.schoolwork.openHistory()}>查看历史</button>
           </div>
           <button
             className={`export-button ${exporting ? 'exporting' : ''}`}
@@ -1202,7 +1194,6 @@ function App() {
           </div>
           <dl className="about-details">
             <div><dt>版本</dt><dd>v{VERSION} · {BUILD_DATE}</dd></div>
-            <div><dt>字体</dt><dd>{fonts.length} 个（来自 fonts/ 目录）</dd></div>
             <div><dt>项目地址</dt><dd><a href="https://github.com/RobertLau2480/SchoolworkOnScreen" target="_blank" rel="noreferrer">https://github.com/RobertLau2480/SchoolworkOnScreen</a></dd></div>
             <div><dt>作者</dt><dd>OctSeventh（RobertLau） · <a href={BILIBILI_URL} target="_blank" rel="noreferrer">B 站主页</a></dd></div>
           </dl>

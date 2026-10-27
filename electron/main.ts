@@ -161,6 +161,29 @@ function createWindow(): void {
       /* ignore */
     }
   });
+  // 唯一的一套右键菜单：由 Chromium 触发 context-menu 事件，用原生 Menu 呈现。
+  // 深浅色由 nativeTheme.themeSource 控制（见 theme:set）。
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const items: Electron.MenuItemConstructorOptions[] = [];
+    if (params.isEditable) {
+      items.push(
+        { label: '撤销', role: 'undo', enabled: params.editFlags.canUndo },
+        { label: '重做', role: 'redo', enabled: params.editFlags.canRedo },
+        { type: 'separator' },
+        { label: '剪切', role: 'cut', enabled: params.editFlags.canCut },
+        { label: '复制', role: 'copy', enabled: params.editFlags.canCopy },
+        { label: '粘贴', role: 'paste', enabled: params.editFlags.canPaste },
+        { label: '全选', role: 'selectAll', enabled: params.editFlags.canSelectAll },
+      );
+    } else if (params.selectionText.trim()) {
+      items.push(
+        { label: '复制', role: 'copy' },
+        { label: '全选', role: 'selectAll' },
+      );
+    }
+    if (!items.length) return;
+    Menu.buildFromTemplate(items).popup({ window: mainWindow ?? undefined });
+  });
   mainWindow.on('focus', () => setDisplayAwake(true));
   mainWindow.on('blur', () => setDisplayAwake(false));
   mainWindow.on('closed', () => {
@@ -296,32 +319,6 @@ ipcMain.handle('history:open', async () => {
   }
   const error = await shell.openPath(directory);
   return error === '';
-});
-
-/**
- * 渲染进程主动请求的右键菜单。
- * 使用单一入口避免触屏长按 + 右键事件重复弹出两个菜单。
- */
-ipcMain.handle('menu:context', async (_event, payload: { editable: boolean; hasSelection: boolean }) => {
-  if (!mainWindow) return;
-  const items: Electron.MenuItemConstructorOptions[] = [];
-  if (payload.editable) {
-    items.push(
-      { label: '撤销', role: 'undo' },
-      { label: '重做', role: 'redo' },
-      { type: 'separator' },
-      { label: '剪切', role: 'cut' },
-      { label: '复制', role: 'copy' },
-      { label: '粘贴', role: 'paste' },
-      { label: '全选', role: 'selectAll' },
-    );
-  } else if (payload.hasSelection) {
-    items.push({ label: '复制', role: 'copy' }, { label: '全选', role: 'selectAll' });
-  }
-  if (!items.length) return;
-  await new Promise<void>((resolve) => {
-    Menu.buildFromTemplate(items).popup({ window: mainWindow!, callback: () => resolve() });
-  });
 });
 
 ipcMain.handle('dialog:confirm-layout', async (_event, message: string) => {
