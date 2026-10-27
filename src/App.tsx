@@ -32,7 +32,7 @@ const BILIBILI_URL = 'https://space.bilibili.com/509648854';
 
 const FONT_SIZES = { small: 26, medium: 30, large: 34 } as const;
 /** 最小字号（px），自适应缩放的下限 */
-const MIN_FONT_SIZE = 18;
+const MIN_FONT_SIZE = 10;
 /**
  * 选中文字的字号滑条范围（px）。
  * 写入绝对像素值，彻底避免 em 嵌套叠加导致的样式冲突；
@@ -81,20 +81,44 @@ type SelectedFormat = Pick<AppSettings, 'font' | 'textColor' | 'bold' | 'highlig
   sizeUniform: boolean;
 };
 
+/**
+ * 让单元格内容始终留在框内：先按基准字号排版，放不下就二分查找更小的字号，
+ * 并把内容里所有「手动设置过字号」的片段按同一比例一起缩小，避免局部大字号把框撑破。
+ * 手动字号记录在 data-swos-fs 上（作者字号），所以反复缩放不会层层缩小。
+ */
 function fitEditor(editor: HTMLElement, baseSize: number): void {
   const overflows = () => editor.scrollHeight > editor.clientHeight + 1 || editor.scrollWidth > editor.clientWidth + 1;
+
+  const scaleInline = (factor: number) => {
+    editor.querySelectorAll<HTMLElement>('[style*="font-size"]').forEach((element) => {
+      let authored = Number.parseFloat(element.dataset.swosFs ?? '');
+      if (!Number.isFinite(authored) || authored <= 0) {
+        // 旧数据没记录作者字号：把当前字号视为作者字号
+        const current = Number.parseFloat(element.style.fontSize);
+        if (!Number.isFinite(current) || current <= 0) return;
+        authored = current;
+        element.dataset.swosFs = `${authored}`;
+      }
+      element.style.fontSize = `${Math.round(Math.max(1, authored * factor) * 100) / 100}px`;
+    });
+  };
+
+  scaleInline(1); // 先还原成作者字号，再重新测量
   editor.style.fontSize = `${baseSize}px`;
   if (!overflows()) return;
 
   let low = MIN_FONT_SIZE;
   let high = baseSize;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
     const size = (low + high) / 2;
     editor.style.fontSize = `${size}px`;
+    scaleInline(size / baseSize);
     if (overflows()) high = size;
     else low = size;
   }
-  editor.style.fontSize = `${low}px`;
+  const fitted = Math.max(MIN_FONT_SIZE, low);
+  editor.style.fontSize = `${fitted}px`;
+  scaleInline(fitted / baseSize);
 }
 
 function cssColorToHex(color: string): string {
@@ -490,6 +514,14 @@ function App() {
 
   const getBaseFontSize = (level: AppSettings['fontSize'] = settings.fontSize) => FONT_SIZES[level];
 
+  /** 在下一帧对某个单元格做一次自适应缩放（同一帧内多次调用只保留最后一次） */
+  const scheduleFit = (editor: HTMLElement) => {
+    const pending = fitFramesRef.current.get(editor);
+    if (pending) window.cancelAnimationFrame(pending);
+    const baseSize = getBaseFontSize();
+    fitFramesRef.current.set(editor, window.requestAnimationFrame(() => fitEditor(editor, baseSize)));
+  };
+
   useEffect(() => {
     const baseSize = getBaseFontSize();
     const fitAll = () => gridRef.current?.querySelectorAll<HTMLElement>('.cell-editor').forEach((editor) => fitEditor(editor, baseSize));
@@ -618,7 +650,10 @@ function App() {
       while (textNode) {
         const text = textNode as Text;
         if (range.intersectsNode(text) && (text.textContent ?? '').trim().length > 0) {
-          const px = Number.parseFloat(window.getComputedStyle(text.parentElement ?? editor).fontSize);
+          const parent = text.parentElement ?? editor;
+          // 记录过作者字号的片段显示其作者字号，其余（继承了单元格基准字号）显示实际渲染字号
+          const authored = Number.parseFloat(parent.dataset.swosFs ?? '');
+          const px = Number.isFinite(authored) ? authored : Number.parseFloat(window.getComputedStyle(parent).fontSize);
           if (Number.isFinite(px)) sizeSet.add(Math.round(px * 10) / 10);
         }
         textNode = walker.nextNode();
@@ -799,11 +834,15 @@ function App() {
       pushUndo();
       sizeUndoPushedRef.current = true;
     }
-    restyle.forEach((span) => { span.style.fontSize = `${size}px`; });
+    restyle.forEach((span) => {
+      span.dataset.swosFs = `${size}`;
+      span.style.fontSize = `${size}px`;
+    });
     wrap.forEach((text) => {
       const parent = text.parentNode;
       if (!parent) return;
       const span = window.document.createElement('span');
+      span.dataset.swosFs = `${size}`;
       span.style.fontSize = `${size}px`;
       parent.insertBefore(span, text);
       span.appendChild(text);
@@ -815,6 +854,8 @@ function App() {
     setSelectedFormat((current) => ({ ...current, sizePx: size, sizeUniform: true }));
 
     queueContentUpdate(Number(editor.dataset.cellIndex), editor, true, true);
+    // 放大后若超出框，立刻触发一次自适应缩放
+    scheduleFit(editor);
   };
 
   const applyBold = () => {
@@ -1015,10 +1056,7 @@ function App() {
                   onInput={(event) => {
                     const editor = event.currentTarget;
                     queueContentUpdate(index, editor);
-                    const pending = fitFramesRef.current.get(editor);
-                    if (pending) window.cancelAnimationFrame(pending);
-                    const baseSize = getBaseFontSize();
-                    fitFramesRef.current.set(editor, window.requestAnimationFrame(() => fitEditor(editor, baseSize)));
+                    scheduleFit(editor);
                     readSelectionFormatRef.current();
                   }}
                   onFocus={readSelectionFormat}
