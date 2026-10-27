@@ -28,8 +28,6 @@ const LEGACY_HIGHLIGHT_COLORS = ['#087f80', '#58d9e6'];
 const VERSION = '1.2.2';
 const BUILD_DATE = '2026年10月27日';
 const UNDO_LIMIT = 120;
-const CARET_TOOLBAR_LINGER = 5000;
-const FADE_DURATION = 320;
 const BILIBILI_URL = 'https://space.bilibili.com/509648854';
 
 const FONT_SIZES = { small: 26, medium: 30, large: 34 } as const;
@@ -211,7 +209,10 @@ function splitTextAtRange(range: Range): void {
   }
 }
 
-/** 判断元素的内容是否被选区完整覆盖（用于判断能否直接改该元素的字号） */
+/** 选区两端是否仍挂在文档上（编辑区被重写后 Range 会失效） */
+function isRangeAlive(range: Range | null): boolean {
+  return Boolean(range && range.startContainer.isConnected && range.endContainer.isConnected);
+}
 
 function emptyDocument(layout: Layout): HomeworkDocument {
   const { rows, columns } = layouts[layout];
@@ -328,8 +329,6 @@ function App() {
     sizePx: FONT_SIZE_DEFAULT, sizeUniform: true,
   });
   const [toolbarVisible, setToolbarVisible] = useState(false);
-  const [toolbarPinned, setToolbarPinned] = useState(false);
-  const [toolbarFading, setToolbarFading] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ left: 0, top: 0, side: 'below' as 'above' | 'below' });
   const [aboutOpen, setAboutOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -344,7 +343,6 @@ function App() {
   const gridRef = useRef<HTMLElement>(null);
   const formatToolbarRef = useRef<HTMLDivElement>(null);
   const selectionRectRef = useRef<{ left: number; top: number; right: number; bottom: number } | null>(null);
-  const toolbarPointerRef = useRef(false);
   const selectionRef = useRef<Range | null>(null);
   /** 一次滑条拖动只记录一条撤销 */
   const sizeUndoPushedRef = useRef(false);
@@ -355,14 +353,10 @@ function App() {
   const redoStackRef = useRef<HomeworkDocument[]>([]);
   const documentRef = useRef(document);
   const historyTimerRef = useRef(0);
-  const caretTimerRef = useRef(0);
-  const fadeTimerRef = useRef(0);
   const fontsRef = useRef<FontOption[]>([]);
-  const pinnedRef = useRef(false);
   const themeRef = useRef<Theme>('dark');
   documentRef.current = document;
   fontsRef.current = fonts;
-  pinnedRef.current = toolbarPinned;
   themeRef.current = settings.theme;
 
   const fontLabel = (family: string) => {
@@ -566,58 +560,30 @@ function App() {
     resizeRef.current = { axis, index, start: axis === 'columns' ? event.clientX : event.clientY, values };
   };
 
-  const clearCaretTimer = () => {
-    window.clearTimeout(caretTimerRef.current);
-    window.clearTimeout(fadeTimerRef.current);
-  };
-
-  const scheduleCaretFade = () => {
-    clearCaretTimer();
-    if (pinnedRef.current) return;
-    caretTimerRef.current = window.setTimeout(() => {
-      setToolbarFading(true);
-      fadeTimerRef.current = window.setTimeout(() => {
-        setToolbarVisible(false);
-        setToolbarFading(false);
-      }, FADE_DURATION);
-    }, CARET_TOOLBAR_LINGER);
-  };
-
   const hideToolbar = () => {
-    clearCaretTimer();
-    setToolbarFading(false);
     setToolbarVisible(false);
-    setToolbarPinned(false);
+    selectionRef.current = null;
   };
 
   const readSelectionFormat = () => {
     const selection = window.getSelection();
-    if (!selection?.rangeCount) {
-      if (!toolbarPointerRef.current) hideToolbar();
-      return;
-    }
-    const range = selection.getRangeAt(0);
-    if (!gridRef.current?.contains(range.commonAncestorContainer)) {
-      if (!toolbarPointerRef.current) hideToolbar();
-      return;
-    }
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const insideGrid = Boolean(range && gridRef.current?.contains(range.commonAncestorContainer));
+    // 判定「是否选中文字」只看选区是否非折叠：不能用 trim()，
+    // 否则只选中空格 / 换行时会被误判成没选中而把样式框藏起来。
+    const hasText = Boolean(range && !range.collapsed && range.toString().length > 0);
+    const anchor = selection?.anchorNode
+      ? (selection.anchorNode.nodeType === Node.ELEMENT_NODE
+        ? selection.anchorNode as HTMLElement
+        : selection.anchorNode.parentElement)
+      : null;
+    const editor = insideGrid && anchor ? anchor.closest<HTMLElement>('.cell-editor') : null;
 
-    const anchor = selection.anchorNode?.nodeType === Node.ELEMENT_NODE
-      ? selection.anchorNode as HTMLElement
-      : selection.anchorNode?.parentElement;
-    const editor = anchor?.closest<HTMLElement>('.cell-editor');
-    if (!editor) {
-      if (!toolbarPointerRef.current) hideToolbar();
-      return;
-    }
-
-    const hasText = !range.collapsed && Boolean(selection.toString().trim());
-    if (toolbarPointerRef.current) {
-      // 操作菜单期间不改变显示状态
-      return;
-    }
-    // 只有真正选中文字时才显示样式框；单纯点击光标不弹菜单。
-    if (!hasText) {
+    if (!range || !hasText || !editor) {
+      // 下拉框 / 字号滑条 / 取色器会把焦点移进样式框，浏览器此时可能瞬时折叠选区；
+      // 只要样式框自身仍持有焦点、且之前记录的选区还在文档里，就保持显示。
+      const toolbarFocused = Boolean(formatToolbarRef.current?.contains(window.document.activeElement));
+      if (toolbarFocused && isRangeAlive(selectionRef.current)) return;
       hideToolbar();
       return;
     }
@@ -625,15 +591,10 @@ function App() {
     selectionRef.current = range.cloneRange();
 
     const bounds = range.getBoundingClientRect();
-    const rect = range.collapsed
-      ? { left: bounds.left, top: bounds.top, right: bounds.left, bottom: bounds.bottom || bounds.top }
-      : { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom };
+    const rect = { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom };
     selectionRectRef.current = rect;
-    setToolbarFading(false);
     setToolbarVisible(true);
-    setToolbarPinned(true);
     setToolbarPosition({ left: rect.left + (rect.right - rect.left) / 2, top: rect.bottom + 10, side: 'below' });
-    clearCaretTimer();
 
     const computed = window.getComputedStyle(anchor ?? editor);
     const pixelSize = Number.parseFloat(computed.fontSize);
@@ -687,21 +648,15 @@ function App() {
   readSelectionFormatRef.current = readSelectionFormat;
 
   useEffect(() => {
-    const handleSelectionChange = () => {
-      const selection = window.getSelection();
-      if (!selection?.rangeCount) return;
-      const range = selection.getRangeAt(0);
-      if (gridRef.current?.contains(range.commonAncestorContainer)) readSelectionFormatRef.current();
-    };
+    // 选区的任何变化（选中 / 折叠 / 清空 / 移出网格）都交给同一个判定函数处理
+    const handleSelectionChange = () => readSelectionFormatRef.current();
+    // 点在样式框与网格之外（标题栏、底栏、对话框…）时立即收起
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (formatToolbarRef.current?.contains(target)) {
-        toolbarPointerRef.current = true;
-        if (!pinnedRef.current) scheduleCaretFade();
-        return;
-      }
+      if (formatToolbarRef.current?.contains(target)) return;
       if (!gridRef.current?.contains(target)) hideToolbar();
     };
+    // 指针在窗口外松开 / 被取消时也要复位，否则标志会卡住导致样式框永不隐藏
     // 阻止浏览器默认右键菜单（含触屏长按菜单），
     // 全应用只保留自定义的横排样式工具栏这一套。
     const handleContextMenu = (event: MouseEvent) => {
@@ -777,7 +732,6 @@ function App() {
     if (currentSelection?.rangeCount) selectionRef.current = currentSelection.getRangeAt(0).cloneRange();
     queueContentUpdate(Number(editor.dataset.cellIndex), editor, true, true);
     readSelectionFormatRef.current();
-    if (!pinnedRef.current) scheduleCaretFade();
   };
 
   /**
@@ -861,7 +815,6 @@ function App() {
     setSelectedFormat((current) => ({ ...current, sizePx: size, sizeUniform: true }));
 
     queueContentUpdate(Number(editor.dataset.cellIndex), editor, true, true);
-    if (!pinnedRef.current) scheduleCaretFade();
   };
 
   const applyBold = () => {
@@ -1076,9 +1029,11 @@ function App() {
                     queueContentUpdate(index, event.currentTarget, true);
                   }}
                   ref={(element) => {
-                    if (element && element !== window.document.activeElement && element.innerHTML !== cell.text) {
-                      element.innerHTML = cell.text;
-                    }
+                    if (!element || element === window.document.activeElement) return;
+                    // 选区还停在这一格时禁止回写 innerHTML，否则会销毁选区、让样式框突然消失
+                    const anchorNode = window.getSelection()?.anchorNode;
+                    if (anchorNode && element.contains(anchorNode)) return;
+                    if (element.innerHTML !== cell.text) element.innerHTML = cell.text;
                   }}
                   style={{
                     fontFamily: fontStack(settings.font),
@@ -1097,15 +1052,10 @@ function App() {
 
       {toolbarVisible && <div
         ref={formatToolbarRef}
-        className={`selection-toolbar ${toolbarPosition.side} ${toolbarFading ? 'fading' : ''} ${toolbarPinned ? 'pinned' : 'caret'}`}
+        className={`selection-toolbar ${toolbarPosition.side}`}
         style={{ left: toolbarPosition.left, top: toolbarPosition.top }}
         role="toolbar"
         aria-label="文字格式"
-        onPointerDownCapture={() => {
-          toolbarPointerRef.current = true;
-          if (!pinnedRef.current) scheduleCaretFade();
-        }}
-        onPointerUpCapture={() => window.setTimeout(() => { toolbarPointerRef.current = false; }, 120)}
       >
         <div className="selection-toolbar-row text-controls-row">
           <label className="floating-select font-select" title="字体">

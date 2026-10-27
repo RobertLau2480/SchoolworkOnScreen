@@ -703,22 +703,12 @@ button { color: inherit; }
   outline: none;
 }
 
-/* 样式菜单：光标触发（淡出）与选区触发（常驻） */
-.selection-toolbar.fading {
-  opacity: 0;
-  transition: opacity .32s ease;
-  pointer-events: none;
-}
 /* 样式框：实线边框 + 85% 不透明背景 */
 .selection-toolbar {
   border-style: solid;
-}
-.selection-toolbar,
-.selection-toolbar.caret {
   background-color: rgba(32, 43, 49, .85);
 }
-[data-theme='light'] .selection-toolbar,
-[data-theme='light'] .selection-toolbar.caret {
+[data-theme='light'] .selection-toolbar {
   background-color: rgba(255, 255, 255, .85);
 }
 /* 选中文字高亮：半透明蓝，不用纯蓝 */
