@@ -40,9 +40,6 @@ const MIN_FONT_SIZE = 18;
  * 直接写入绝对像素值，彻底避免 em 嵌套叠加导致的样式冲突。
  */
 const FONT_SIZE_LEVELS = [20, 25, 30, 35, 40] as const;
-/** 五档中与「标准」对应的档位索引 */
-const DEFAULT_SIZE_LEVEL = 2;
-
 const defaultSettings: AppSettings = {
   background: THEME_SURFACES.dark.background,
   frame: THEME_SURFACES.dark.frame,
@@ -77,6 +74,8 @@ type SelectedFormat = Pick<AppSettings, 'font' | 'fontSize' | 'textColor' | 'bol
   highlighted: boolean;
   italic: boolean;
   fontStep: number;
+  /** 选区内的字号是否统一；不统一时五档按钮不高亮 */
+  sizeUniform: boolean;
 };
 
 function fitEditor(editor: HTMLElement, baseSize: number): void {
@@ -309,6 +308,7 @@ function App() {
   const [selectedFormat, setSelectedFormat] = useState<SelectedFormat>({
     font: '', fontSize: defaultSettings.fontSize, textColor: defaultSettings.textColor,
     bold: false, italic: false, highlight: defaultSettings.highlight, highlighted: false, fontStep: 0,
+    sizeUniform: true,
   });
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const [toolbarPinned, setToolbarPinned] = useState(false);
@@ -411,6 +411,7 @@ function App() {
         highlight: parsed.highlight,
         highlighted: false,
         fontStep: 0,
+        sizeUniform: true,
       });
       fontStepRef.current = 0;
       setHistoryEnabled(saved.historyEnabled === 'true');
@@ -632,16 +633,35 @@ function App() {
         break;
       }
     }
-    // 当前文字字号最接近五档中的哪一档
-    let sizeLevel = 0;
-    let bestDelta = Number.POSITIVE_INFINITY;
-    FONT_SIZE_LEVELS.forEach((value, index) => {
-      const delta = Math.abs(value - pixelSize);
-      if (delta < bestDelta) {
-        bestDelta = delta;
-        sizeLevel = index;
+    // 收集选区内所有文字的实际字号，判断是否统一（不统一时不点亮任何档位）
+    const sizeSet = new Set<number>();
+    {
+      const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+      let textNode = walker.nextNode();
+      while (textNode) {
+        const text = textNode as Text;
+        if (range.intersectsNode(text) && (text.textContent ?? '').trim().length > 0) {
+          const px = Number.parseFloat(window.getComputedStyle(text.parentElement ?? editor).fontSize);
+          if (Number.isFinite(px)) sizeSet.add(Math.round(px * 10) / 10);
+        }
+        textNode = walker.nextNode();
       }
-    });
+    }
+    const sizeUniform = sizeSet.size <= 1;
+    const uniformSize = sizeSet.size === 1 ? [...sizeSet][0] : pixelSize;
+
+    // 统一时取最接近的五档档位；不统一时档位记为 -1（不高亮）
+    let sizeLevel = -1;
+    if (sizeUniform) {
+      let bestDelta = Number.POSITIVE_INFINITY;
+      FONT_SIZE_LEVELS.forEach((value, index) => {
+        const delta = Math.abs(value - uniformSize);
+        if (delta < bestDelta) {
+          bestDelta = delta;
+          sizeLevel = index;
+        }
+      });
+    }
     fontStepRef.current = sizeLevel;
     const matched = fontsRef.current.find((option) => computed.fontFamily.includes(option.family));
     const next: SelectedFormat = {
@@ -653,6 +673,7 @@ function App() {
       highlight,
       highlighted,
       fontStep: sizeLevel,
+      sizeUniform,
     };
     setSelectedFormat((current) => (
       Object.keys(next).every((key) => current[key as keyof SelectedFormat] === next[key as keyof SelectedFormat]) ? current : next
@@ -678,13 +699,18 @@ function App() {
       }
       if (!gridRef.current?.contains(target)) hideToolbar();
     };
-    // 右键菜单完全交给 Chromium 原生实现（主进程监听 context-menu 事件），
-    // 渲染进程不做任何拦截，避免触屏长按同时弹出两套菜单。
+    // 阻止浏览器默认右键菜单（含触屏长按菜单），
+    // 全应用只保留自定义的横排样式工具栏这一套。
+    const handleContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+    };
     window.document.addEventListener('selectionchange', handleSelectionChange);
     window.document.addEventListener('pointerdown', handlePointerDown, true);
+    window.document.addEventListener('contextmenu', handleContextMenu);
     return () => {
       window.document.removeEventListener('selectionchange', handleSelectionChange);
       window.document.removeEventListener('pointerdown', handlePointerDown, true);
+      window.document.removeEventListener('contextmenu', handleContextMenu);
     };
   }, []);
 
@@ -1081,14 +1107,19 @@ function App() {
               {fonts.map((option) => <option key={option.family} value={option.family}>{option.label}</option>)}
             </select>
           </label>
-          <div className="font-size-controls" title={`字号：${FONT_SIZE_LEVELS[selectedFormat.fontStep] ?? FONT_SIZE_LEVELS[DEFAULT_SIZE_LEVEL]}px`}>
+          <div
+            className="font-size-controls"
+            title={selectedFormat.sizeUniform && selectedFormat.fontStep >= 0
+              ? `字号：${FONT_SIZE_LEVELS[selectedFormat.fontStep]}px`
+              : '选中文字字号不一致'}
+          >
             <span className="floating-caption">字号</span>
             <div className="font-size-steps" role="group" aria-label="字号五档">
               {FONT_SIZE_LEVELS.map((value, index) => (
                 <button
                   key={value}
                   type="button"
-                  className={`font-size-step ${selectedFormat.fontStep === index ? 'active' : ''}`}
+                  className={`font-size-step ${selectedFormat.sizeUniform && selectedFormat.fontStep === index ? 'active' : ''}`}
                   aria-label={`字号 ${value}px`}
                   title={`${value}px`}
                   onMouseDown={(event) => event.preventDefault()}

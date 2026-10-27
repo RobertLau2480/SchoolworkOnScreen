@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeTheme, powerSaveBlocker, protocol, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeTheme, powerSaveBlocker, protocol, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -161,29 +161,8 @@ function createWindow(): void {
       /* ignore */
     }
   });
-  // 唯一的一套右键菜单：由 Chromium 触发 context-menu 事件，用原生 Menu 呈现。
-  // 深浅色由 nativeTheme.themeSource 控制（见 theme:set）。
-  mainWindow.webContents.on('context-menu', (_event, params) => {
-    const items: Electron.MenuItemConstructorOptions[] = [];
-    if (params.isEditable) {
-      items.push(
-        { label: '撤销', role: 'undo', enabled: params.editFlags.canUndo },
-        { label: '重做', role: 'redo', enabled: params.editFlags.canRedo },
-        { type: 'separator' },
-        { label: '剪切', role: 'cut', enabled: params.editFlags.canCut },
-        { label: '复制', role: 'copy', enabled: params.editFlags.canCopy },
-        { label: '粘贴', role: 'paste', enabled: params.editFlags.canPaste },
-        { label: '全选', role: 'selectAll', enabled: params.editFlags.canSelectAll },
-      );
-    } else if (params.selectionText.trim()) {
-      items.push(
-        { label: '复制', role: 'copy' },
-        { label: '全选', role: 'selectAll' },
-      );
-    }
-    if (!items.length) return;
-    Menu.buildFromTemplate(items).popup({ window: mainWindow ?? undefined });
-  });
+  // 不再注册 context-menu：右键 / 长按弹出的菜单统一由渲染进程的横排样式工具栏承担，
+  // 避免触屏长按时同时出现原生菜单与自定义工具栏两套。
   mainWindow.on('focus', () => setDisplayAwake(true));
   mainWindow.on('blur', () => setDisplayAwake(false));
   mainWindow.on('closed', () => {

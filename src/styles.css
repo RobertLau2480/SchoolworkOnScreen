@@ -885,20 +885,19 @@ button { color: inherit; }
   padding: 0 1px;
 }
 .font-size-step {
-  width: 11px;
+  height: 100%;
   padding: 0;
   border: 0;
   background: #455a63;
-  /* 直角三角形：右边竖直，斜边自左下升到右上 */
-  clip-path: polygon(0 100%, 100% 0, 100% 100%);
   cursor: pointer;
   transition: background .12s ease;
 }
-.font-size-step:nth-child(1) { height: 42%; }
-.font-size-step:nth-child(2) { height: 56%; }
-.font-size-step:nth-child(3) { height: 70%; }
-.font-size-step:nth-child(4) { height: 85%; }
-.font-size-step:nth-child(5) { height: 100%; }
+/* 长方形，宽度从左到右依次增加 */
+.font-size-step:nth-child(1) { width: 6px; }
+.font-size-step:nth-child(2) { width: 9px; }
+.font-size-step:nth-child(3) { width: 12px; }
+.font-size-step:nth-child(4) { width: 15px; }
+.font-size-step:nth-child(5) { width: 18px; }
 .font-size-step:hover { background: #6fc9c2; }
 .font-size-step.active { background: #45b7b0; }
 [data-theme='light'] .font-size-step { background: #c3d0cb; }
