@@ -17,13 +17,18 @@ const FONT_EXTENSIONS = new Set(['.woff2', '.woff', '.ttf', '.otf']);
 /** 单次返回字体数量上限，避免异常目录拖慢启动 */
 const MAX_FONTS = 200;
 
-/** 用户可增减字体的目录：打包后位于 EXE 旁的 fonts/，开发时位于项目根 fonts/。 */
+/** 打包后的运行目录：单文件便携版会把程序解压到临时目录，用户数据仍写在 EXE 旁。 */
+function executableDirectory(): string {
+  return process.env.PORTABLE_EXECUTABLE_DIR ?? path.dirname(process.execPath);
+}
+
+/** 用户可增减字体的目录：打包后位于 EXE 旁的 fonts/，单文件版回退到解压目录内的 fonts/。 */
 function userFontDirectory(): string {
-  if (app.isPackaged) {
-    const directory = process.env.PORTABLE_EXECUTABLE_DIR ?? path.dirname(process.execPath);
-    return path.join(directory, 'fonts');
-  }
-  return path.join(app.getAppPath(), 'fonts');
+  if (!app.isPackaged) return path.join(app.getAppPath(), 'fonts');
+  const external = path.join(executableDirectory(), 'fonts');
+  if (fs.existsSync(external)) return external;
+  const bundled = path.join(path.dirname(process.execPath), 'fonts');
+  return fs.existsSync(bundled) ? bundled : external;
 }
 
 /** 按扩展名推断 MIME 类型。 */
@@ -58,11 +63,14 @@ function fontDataUrl(url: string): string | null {
 
 function dataDirectory(): string {
   if (!app.isPackaged) return app.getAppPath();
-  const directory = process.env.PORTABLE_EXECUTABLE_DIR ?? path.dirname(process.execPath);
+  const directory = executableDirectory();
   for (const filename of ['config.ini', 'content.json']) {
     const target = path.join(directory, filename);
-    const bundled = path.join(process.resourcesPath, filename);
-    if (!fs.existsSync(target) && fs.existsSync(bundled)) fs.copyFileSync(bundled, target);
+    if (fs.existsSync(target)) continue;
+    // 目录版从 resources 取默认文件，单文件版从解压目录取
+    const source = [path.join(process.resourcesPath, filename), path.join(path.dirname(process.execPath), filename)]
+      .find((candidate) => fs.existsSync(candidate));
+    if (source) fs.copyFileSync(source, target);
   }
   return directory;
 }

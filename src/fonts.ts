@@ -15,14 +15,9 @@ export interface FontOption {
 
 /** 字体族名加前缀，避免与系统同名字体冲突。 */
 const FAMILY_PREFIX = 'SWOS-';
-/** 默认优先使用的字体名 */
-const PREFERRED_LABEL = '思源黑体';
-const FALLBACK_FAMILY = `${FAMILY_PREFIX}SimSun`;
 
 /** 运行时字体列表（启动时填充）。 */
-export let fontOptions: FontOption[] = [];
-/** 默认字体族名。 */
-export let DEFAULT_FONT_FAMILY = `${FAMILY_PREFIX}${PREFERRED_LABEL}`;
+let fontOptions: FontOption[] = [];
 
 /** 注入 @font-face 规则（重复调用会先移除旧规则）。 */
 function injectFontFaces(): void {
@@ -49,10 +44,6 @@ export async function loadLocalFonts(): Promise<FontOption[]> {
     console.error('读取字体目录失败', error);
   }
   fontOptions = files.map(({ label, url }) => ({ family: `${FAMILY_PREFIX}${label}`, label, url }));
-  DEFAULT_FONT_FAMILY =
-    fontOptions.find((option) => option.label === PREFERRED_LABEL)?.family
-    ?? fontOptions[0]?.family
-    ?? FALLBACK_FAMILY;
   injectFontFaces();
   return fontOptions;
 }
@@ -79,9 +70,4 @@ export async function buildFontEmbedCSS(families: Set<string>): Promise<string> 
     })
     .filter(Boolean)
     .join('\n');
-}
-
-/** 判断某个 font-family 是否属于本地字体。 */
-export function isLocalFont(family: string): boolean {
-  return family.startsWith(FAMILY_PREFIX);
 }

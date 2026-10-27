@@ -2,7 +2,7 @@
 
 > 面向 Windows 的本地作业展示程序，让作业内容清晰呈现在屏幕上。
 
-![Version](https://img.shields.io/badge/version-1.1.1-blue)
+![Version](https://img.shields.io/badge/version-1.2.2-blue)
 ![Electron](https://img.shields.io/badge/Electron-22.3.27-47848F?logo=electron&logoColor=white)
 ![React](https://img.shields.io/badge/React-18.2.0-61DAFB?logo=react&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4.5-3178C6?logo=typescript&logoColor=white)
@@ -16,7 +16,7 @@
 
 **屏上作业** 是一款面向 Windows 的本地作业展示程序。它使用 Electron 容器承载 React Web UI，数据完全保存在本机，不经过任何网络传输。作业内容和设置分别以 `content.json`、`config.ini` 文件保存在程序 EXE 同目录，方便备份和迁移。
 
-程序内置 **12 款中文字体**（WOFF2 压缩），并提供 **深色 / 浅色两套主题**，适合在触摸屏或大屏上展示每日作业。
+程序内置 **11 款中文字体**（WOFF2 压缩，放在 `fonts/` 目录，可自行增删），并提供 **深色 / 浅色两套主题**，适合在触摸屏或大屏上展示每日作业。
 
 ## ✨ 功能特性
 
@@ -28,8 +28,9 @@
   12 小时内为灰色、超过 12 小时为黄色；**仅在内容真正变更时刷新**
 
 ### 🎨 文本格式化
-- 对选中文字应用**字体**、**字号**、**颜色**、**粗体**设置
-- **字号微调**：`A−` / `A+` 按钮在基准字号上最多增减 5 档，仅作用于选中文字
+- 选中文字后可设置**字体**、**字号**、**颜色**、**粗体 / 斜体**、**高光**
+- **字号滑条**：12–72px 连续可调（不再局限于固定几档），拖动时实时预览，从左到右滑条逐渐变宽
+- **精确作用范围**：字号 / 颜色 / 高光只作用于真正选中的文字，不会连带影响相邻字符
 - **主题高光**：高亮颜色随主题联动（深色为暖橙、浅色为亮黄），避免颜色叠加
 
 ### 🎨 界面定制
@@ -61,14 +62,31 @@ npm run dev:desktop
 
 ### 打包发布
 
+提供两种 Windows 产物，功能完全一致，只是分发形式不同：
+
 ```powershell
-# 生成 Windows 完整运行目录
-npm run package:windows
+# ① 完整版：生成可直接运行的目录（含 Electron 运行时 DLL）
+npm run package:full
+
+# ② 轻简版：打包成单个自解压 EXE，便于分发
+npm run package:slim
+
+# 一次生成两者
+npm run package:all
 ```
 
-产物位于 `release\windows\win-unpacked`。请**整体复制或压缩**该文件夹，不要单独移动 `SchoolworkOnScreen.exe`；Electron 运行时 DLL（包括 `ffmpeg.dll`）必须与 EXE 保持在同一目录。
+| 版本 | 命令 | 产物位置 | 说明 |
+|---|---|---|---|
+| 完整版（带依赖） | `npm run package:full` | `release\windows\win-unpacked\` | 整目录即为完整程序，必须**整体复制或压缩**，不要单独移动 `SchoolworkOnScreen.exe`（`ffmpeg.dll` 等运行时依赖必须在同一目录） |
+| 轻简版 | `npm run package:slim` | `release\windows\屏上作业-<版本>-portable.exe` | 单个 EXE，双击即用；首次启动会自解压到临时目录，启动稍慢 |
 
-> ⚠️ **注意**：首次启动时默认 `config.ini` 与 `content.json` 会复制到 EXE 所在目录；之后该目录需要有写入权限。建议放在可写的普通文件夹，**不要**放在 `Program Files`。
+两个版本都会把 `fonts\`、`config.ini`、`content.json` 一起打进去：
+
+- **完整版**直接使用同目录下的 `fonts\`，用户可自由增删字体；
+- **轻简版**运行时读取自身解压目录内的 `fonts\`，若 EXE 旁存在 `fonts\` 则优先使用该目录。
+
+> ⚠️ **注意**：作业数据 `config.ini` / `content.json`（以及 `history\` 目录）写在 EXE 所在目录，因此该目录需要写入权限。建议放在可写的普通文件夹，**不要**放在 `Program Files`。
+
 
 ## 📁 项目结构
 
@@ -84,11 +102,9 @@ SchoolworkOnScreen/
 │   ├── fonts.ts              # 本地字体加载与注册
 │   ├── types.ts              # TypeScript 类型定义
 │   └── assets.d.ts           # 资源类型声明
-├── 📂 fonts/                 # 字体源文件（TTF / OTF / TTC）
-├── 📂 fonts-woff2/           # WOFF2 压缩字体（供程序使用）
-├── 📄 convert-fonts.py       # 字体 TTF/OTF → WOFF2 转换脚本
-├── 📄 config.ini             # 外观配置（运行时生成）
-├── 📄 content.json           # 作业内容数据（运行时生成）
+├── 📂 fonts/                 # 内置字体（WOFF2，运行时扫描，可自行增删）
+├── 📄 config.ini             # 外观配置（运行时生成，位于 EXE 旁）
+├── 📄 content.json           # 作业内容数据（运行时生成，位于 EXE 旁）
 ├── 📄 index.html             # HTML 入口
 ├── 📄 package.json           # 项目配置与依赖
 ├── 📄 vite.config.ts         # Vite 配置
@@ -98,23 +114,13 @@ SchoolworkOnScreen/
 
 ## 🔤 内置字体
 
-程序内置以下 12 款中文字体，字体选择列表显示文件名（去掉后缀）：
+程序启动时扫描 EXE 同目录下的 `fonts/` 文件夹（支持 `.woff2` / `.woff` / `.ttf` / `.otf`，最多 200 个），字体选择列表显示文件名（去掉后缀）：
 
-| 展示名 | 展示名 | 展示名 |
-|---|---|---|
-| 仿宋 | 华文中宋 | 华文新魏 |
-| 幼圆 | 思源宋体 | **思源黑体**（默认） |
-| 方正姚体 | 方正舒体 | 楷体 |
-| 汉仪乐喵体 | 隶书 | 微软雅黑 |
+仿宋、华文中宋、华文新魏、幼圆、思源宋体、**思源黑体**（默认）、方正姚体、方正舒体、楷体、汉仪乐喵体、隶书
 
-字体在应用启动时通过 `FontFace` API 异步注册。为精简安装体积，`fonts/` 下的 TTF/OTF/TTC 会经 `convert-fonts.py` 转换为 **WOFF2**（体积减少约 50%），程序实际加载的是 `fonts-woff2/` 中的压缩文件。
+字体通过自定义协议 `swos-font://` 按需流式加载（不拖慢启动、不走 IPC 传 base64），启动时注入对应 `@font-face` 规则；导出图片时再把用到的字体转成 data URL 内嵌，保证导出的 PNG 字体一致。
 
-如需自行转换字体，安装依赖后运行：
-
-```powershell
-pip install fonttools brotli
-python convert-fonts.py
-```
+需要新增字体时，把 `.woff2` / `.ttf` / `.otf` 文件放进 `fonts/` 然后重启程序即可。
 
 ## 🎨 主题与配色
 
@@ -123,7 +129,7 @@ python convert-fonts.py
 | 背景 | `#29332f` | `#eef1ee` |
 | 单元格 | `#35413b` | `#ffffff` |
 | 默认文字 | 白 `#ffffff` | 黑 `#000000` |
-| 高光 | 暖橙 `#b85c1e` | 亮黄 `#fff176` |
+| 高光 | 深棕 `#5a3a1e` | 亮黄 `#fff176` |
 
 字体颜色预设在切换主题时按顺序一一对应映射，高光颜色同步切换。
 
@@ -137,14 +143,14 @@ python convert-fonts.py
 [appearance]
 background=#29332f        ; 背景颜色
 frame=#35413b             ; 单元格颜色
-layout=2x3                ; 网格布局
-locked=true               ; 网格是否锁定
+locked=true               ; 网格尺寸是否锁定
 font=SWOS-思源黑体         ; 默认字体（族名带 SWOS- 前缀）
-fontSize=medium           ; 默认字号
+fontSize=medium           ; 单元格基准字号
 textColor=#ffffff         ; 文字颜色
 bold=false                ; 是否粗体
-highlight=#b85c1e         ; 高光颜色
+highlight=#5a3a1e         ; 高光颜色（随主题）
 theme=dark                ; 主题（dark / light）
+historyEnabled=false      ; 是否开启每日存档
 ```
 
 ### `content.json`
