@@ -469,28 +469,6 @@ button { color: inherit; }
   border: 1px solid #46575e;
 }
 .font-size-controls .floating-caption { margin-right: 2px; }
-.font-size-btn {
-  display: grid;
-  place-items: center;
-  min-width: 30px;
-  height: 28px;
-  padding: 0 6px;
-  color: #e5eeee;
-  background: #35444b;
-  border: 1px solid #53646c;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.font-size-btn:hover:not(:disabled) { background: #42565f; border-color: #75b9b5; }
-.font-size-btn:disabled { opacity: .35; cursor: not-allowed; }
-.font-step-value {
-  min-width: 32px;
-  text-align: center;
-  color: #b8c9cd;
-  font-size: 11px;
-  white-space: nowrap;
-}
 .controlbar { position: relative; min-height: 56px; padding: 5px 12px; }
 .controlbar .about-button {
   min-width: 64px;
@@ -765,9 +743,6 @@ button { color: inherit; }
 [data-theme='light'] .floating-select select { color: #24322d; }
 [data-theme='light'] .floating-select select option { color: #24322d; background: #ffffff; }
 [data-theme='light'] .floating-value { color: #24322d; }
-[data-theme='light'] .font-size-btn { color: #24322d; background: #e7eeeb; border-color: #cdd8d3; }
-[data-theme='light'] .font-size-btn:hover:not(:disabled) { background: #dbe6e1; border-color: #8fc4bf; }
-[data-theme='light'] .font-step-value { color: #5c6d67; }
 [data-theme='light'] .floating-color { border-color: #b7c3be; }
 [data-theme='light'] .highlight-toggle,
 [data-theme='light'] .floating-format { color: #24322d; background: #f2f6f4; border-color: #d5ded9; }
@@ -872,37 +847,76 @@ button { color: inherit; }
   border-color: #1a9d96;
 }
 
-/* 字号五档：从左到右逐级变大的直角三角形 */
+/* 字号滑条：轨道从左到右逐渐变宽的楔形，档位连续可调 */
 .font-size-controls {
-  gap: 7px;
-  padding: 3px 10px;
+  gap: 6px;
+  padding: 3px 8px;
 }
-.font-size-steps {
+.font-size-slider {
+  position: relative;
   display: flex;
-  align-items: flex-end;
-  gap: 2px;
+  align-items: center;
+  width: 96px;
   height: 22px;
-  padding: 0 1px;
 }
-.font-size-step {
-  height: 100%;
-  padding: 0;
-  border: 0;
+.slider-wedge {
+  position: absolute;
+  inset: 0;
   background: #455a63;
-  cursor: pointer;
+  clip-path: polygon(0 44%, 100% 0, 100% 100%, 0 56%);
   transition: background .12s ease;
+  pointer-events: none;
 }
-/* 长方形，宽度从左到右依次增加 */
-.font-size-step:nth-child(1) { width: 6px; }
-.font-size-step:nth-child(2) { width: 9px; }
-.font-size-step:nth-child(3) { width: 12px; }
-.font-size-step:nth-child(4) { width: 15px; }
-.font-size-step:nth-child(5) { width: 18px; }
-.font-size-step:hover { background: #6fc9c2; }
-.font-size-step.active { background: #45b7b0; }
-[data-theme='light'] .font-size-step { background: #c3d0cb; }
-[data-theme='light'] .font-size-step:hover { background: #7fc4be; }
-[data-theme='light'] .font-size-step.active { background: #16857f; }
+.font-size-slider:hover .slider-wedge { background: #6fc9c2; }
+.font-size-slider input[type='range'] {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+.font-size-slider input[type='range']::-webkit-slider-runnable-track {
+  height: 22px;
+  background: transparent;
+}
+.font-size-slider input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 7px;
+  height: 24px;
+  margin-top: -1px;
+  border: 0;
+  border-radius: 1px;
+  background: #45b7b0;
+  box-shadow: 0 0 0 1px #0e2024;
+  cursor: pointer;
+}
+.font-size-slider input[type='range']:focus { outline: none; }
+.font-size-slider input[type='range']:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px rgba(69, 183, 176, .5);
+}
+.font-size-value {
+  min-width: 18px;
+  text-align: right;
+  color: #b8c9cd;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.font-size-controls.mixed .font-size-value { color: #7f9198; }
+[data-theme='light'] .slider-wedge { background: #c3d0cb; }
+[data-theme='light'] .font-size-slider:hover .slider-wedge { background: #7fc4be; }
+[data-theme='light'] .font-size-slider input[type='range']::-webkit-slider-thumb {
+  background: #16857f;
+  box-shadow: 0 0 0 1px #ffffff;
+}
+[data-theme='light'] .font-size-value { color: #5c6d67; }
+[data-theme='light'] .font-size-controls.mixed .font-size-value { color: #9aaba4; }
 
 /* 每日存档：开关 + 文件夹链接 */
 .history-block {

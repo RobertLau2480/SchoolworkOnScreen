@@ -309,7 +309,7 @@ ipcMain.handle('dialog:confirm-layout', async (_event, message: string) => {
     cancelId: 0,
     title: '切换表格布局',
     message,
-    detail: '切换后将清除当前所有作业内容，此操作无法撤销。',
+    detail: '切换后将清除当前所有作业内容。',
   });
   return result.response === 1;
 });

@@ -36,10 +36,14 @@ const FONT_SIZES = { small: 26, medium: 30, large: 34 } as const;
 /** 最小字号（px），自适应缩放的下限 */
 const MIN_FONT_SIZE = 18;
 /**
- * 选中文字的字号五档（从小到大）。
- * 直接写入绝对像素值，彻底避免 em 嵌套叠加导致的样式冲突。
+ * 选中文字的字号滑条范围（px）。
+ * 写入绝对像素值，彻底避免 em 嵌套叠加导致的样式冲突；
+ * 档位连续可调，不再局限于固定几档。
  */
-const FONT_SIZE_LEVELS = [20, 25, 30, 35, 40] as const;
+const FONT_SIZE_MIN = 12;
+const FONT_SIZE_MAX = 72;
+/** 选区字号不一致时滑条的默认停靠字号 */
+const FONT_SIZE_DEFAULT = 30;
 const defaultSettings: AppSettings = {
   background: THEME_SURFACES.dark.background,
   frame: THEME_SURFACES.dark.frame,
@@ -70,11 +74,12 @@ function isTimeStale(timestamp: number | null | undefined, now: number): boolean
   return now - timestamp > 12 * 60 * 60 * 1000;
 }
 
-type SelectedFormat = Pick<AppSettings, 'font' | 'fontSize' | 'textColor' | 'bold' | 'highlight'> & {
+type SelectedFormat = Pick<AppSettings, 'font' | 'textColor' | 'bold' | 'highlight'> & {
   highlighted: boolean;
   italic: boolean;
-  fontStep: number;
-  /** 选区内的字号是否统一；不统一时五档按钮不高亮 */
+  /** 选区统一时的实际字号（px）；不统一时用锚点处字号作为滑条停靠位置 */
+  sizePx: number;
+  /** 选区内的字号是否统一；不统一时滑条显示中性状态 */
   sizeUniform: boolean;
 };
 
@@ -156,45 +161,57 @@ function saveOffsets(editor: HTMLElement, range: Range): { start: number; end: n
 
 function restoreOffsets(editor: HTMLElement, start: number, end: number): Range {
   const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  const range = window.document.createRange();
   let count = 0;
-  let startNode: Node = editor;
-  let endNode: Node = editor;
+  let startNode: Text | null = null;
+  let endNode: Text | null = null;
   let startOffset = 0;
   let endOffset = 0;
-  let node = walker.nextNode();
-  while (node) {
-    const length = (node as Text).length;
-    if (startNode === editor && count + length >= start) {
-      startNode = node;
-      startOffset = start - count;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node as Text;
+    const next = count + text.length;
+    if (!startNode && start <= next) {
+      startNode = text;
+      startOffset = Math.max(0, Math.min(text.length, start - count));
     }
-    if (endNode === editor && count + length >= end) {
-      endNode = node;
-      endOffset = end - count;
+    if (!endNode && end <= next) {
+      endNode = text;
+      endOffset = Math.max(0, Math.min(text.length, end - count));
       break;
     }
-    count += length;
-    node = walker.nextNode();
+    count = next;
   }
-  const range = window.document.createRange();
+  if (!startNode || !endNode) {
+    range.selectNodeContents(editor);
+    return range;
+  }
   try {
-    range.setStart(startNode, Math.max(0, startOffset));
-    range.setEnd(endNode, Math.max(0, endOffset));
+    range.setStart(startNode, startOffset);
+    range.setEnd(endNode, endOffset);
   } catch {
     range.selectNodeContents(editor);
   }
   return range;
 }
 
-function unwrapSizeSpans(editor: HTMLElement, range: Range): void {
-  editor.querySelectorAll<HTMLElement>('span[style*="font-size"]').forEach((span) => {
-    if (!range.intersectsNode(span)) return;
-    const parent = span.parentNode;
-    if (!parent) return;
-    while (span.firstChild) parent.insertBefore(span.firstChild, span);
-    parent.removeChild(span);
-  });
+/**
+ * 把选区起止边界处被「切到一半」的文本节点拆开。
+ * 拆完后选区外的文字成为独立节点，后续无论怎样包裹都不会被牵连。
+ */
+function splitTextAtRange(range: Range): void {
+  const { startContainer, startOffset, endContainer, endOffset } = range;
+  // 先切尾部：此时头部边界尚未变化，range 会自动跟随
+  if (endContainer.nodeType === Node.TEXT_NODE) {
+    const text = endContainer as Text;
+    if (endOffset > 0 && endOffset < text.length) text.splitText(endOffset);
+  }
+  if (startContainer.nodeType === Node.TEXT_NODE) {
+    const text = startContainer as Text;
+    if (startOffset > 0 && startOffset < text.length) text.splitText(startOffset);
+  }
 }
+
+/** 判断元素的内容是否被选区完整覆盖（用于判断能否直接改该元素的字号） */
 
 function emptyDocument(layout: Layout): HomeworkDocument {
   const { rows, columns } = layouts[layout];
@@ -306,9 +323,9 @@ function App() {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [fonts, setFonts] = useState<FontOption[]>([]);
   const [selectedFormat, setSelectedFormat] = useState<SelectedFormat>({
-    font: '', fontSize: defaultSettings.fontSize, textColor: defaultSettings.textColor,
-    bold: false, italic: false, highlight: defaultSettings.highlight, highlighted: false, fontStep: 0,
-    sizeUniform: true,
+    font: '', textColor: defaultSettings.textColor,
+    bold: false, italic: false, highlight: defaultSettings.highlight, highlighted: false,
+    sizePx: FONT_SIZE_DEFAULT, sizeUniform: true,
   });
   const [toolbarVisible, setToolbarVisible] = useState(false);
   const [toolbarPinned, setToolbarPinned] = useState(false);
@@ -329,7 +346,8 @@ function App() {
   const selectionRectRef = useRef<{ left: number; top: number; right: number; bottom: number } | null>(null);
   const toolbarPointerRef = useRef(false);
   const selectionRef = useRef<Range | null>(null);
-  const fontStepRef = useRef(0);
+  /** 一次滑条拖动只记录一条撤销 */
+  const sizeUndoPushedRef = useRef(false);
   const fitFramesRef = useRef(new WeakMap<HTMLElement, number>());
   const inputTimersRef = useRef(new Map<number, number>());
   const resizeRef = useRef<{ axis: 'columns' | 'rows'; index: number; start: number; values: number[] } | null>(null);
@@ -404,16 +422,14 @@ function App() {
       setSettings(parsed);
       setSelectedFormat({
         font: parsed.font,
-        fontSize: parsed.fontSize,
         textColor: parsed.textColor,
         bold: parsed.bold,
         italic: false,
         highlight: parsed.highlight,
         highlighted: false,
-        fontStep: 0,
+        sizePx: FONT_SIZE_DEFAULT,
         sizeUniform: true,
       });
-      fontStepRef.current = 0;
       setHistoryEnabled(saved.historyEnabled === 'true');
       setLoaded(true);
     })();
@@ -648,31 +664,18 @@ function App() {
       }
     }
     const sizeUniform = sizeSet.size <= 1;
-    const uniformSize = sizeSet.size === 1 ? [...sizeSet][0] : pixelSize;
-
-    // 统一时取最接近的五档档位；不统一时档位记为 -1（不高亮）
-    let sizeLevel = -1;
-    if (sizeUniform) {
-      let bestDelta = Number.POSITIVE_INFINITY;
-      FONT_SIZE_LEVELS.forEach((value, index) => {
-        const delta = Math.abs(value - uniformSize);
-        if (delta < bestDelta) {
-          bestDelta = delta;
-          sizeLevel = index;
-        }
-      });
-    }
-    fontStepRef.current = sizeLevel;
+    // 统一时用选区实际字号；不统一时用锚点处字号，滑动滑条即可一键统一全部
+    const rawSize = sizeSet.size === 1 ? [...sizeSet][0] : pixelSize;
+    const sizePx = Number.isFinite(rawSize) ? Math.round(rawSize) : FONT_SIZE_DEFAULT;
     const matched = fontsRef.current.find((option) => computed.fontFamily.includes(option.family));
     const next: SelectedFormat = {
       font: matched ? matched.family : settings.font,
-      fontSize: settings.fontSize,
       textColor: cssColorToHex(computed.color),
       bold: Number.parseInt(computed.fontWeight, 10) >= 600,
       italic: computed.fontStyle === 'italic' || computed.fontStyle.startsWith('oblique'),
       highlight,
       highlighted,
-      fontStep: sizeLevel,
+      sizePx,
       sizeUniform,
     };
     setSelectedFormat((current) => (
@@ -711,6 +714,17 @@ function App() {
       window.document.removeEventListener('selectionchange', handleSelectionChange);
       window.document.removeEventListener('pointerdown', handlePointerDown, true);
       window.document.removeEventListener('contextmenu', handleContextMenu);
+    };
+  }, []);
+
+  // 滑条一次拖动结束后复位，下一次操作重新记录撤销
+  useEffect(() => {
+    const reset = () => { sizeUndoPushedRef.current = false; };
+    window.addEventListener('pointerup', reset);
+    window.addEventListener('pointercancel', reset);
+    return () => {
+      window.removeEventListener('pointerup', reset);
+      window.removeEventListener('pointercancel', reset);
     };
   }, []);
 
@@ -766,93 +780,87 @@ function App() {
     if (!pinnedRef.current) scheduleCaretFade();
   };
 
-  /** 五档字号：直接把选中文字改成目标档位的绝对字号，保留其他所有样式。 */
-  const applyFontSizeLevel = (level: number) => {
+  /**
+   * 字号滑条：把选区内的文字设为指定像素字号（档位连续可调）。
+   * 只改动真正落在选区内的文字，选区外的文字绝不会被牵连；
+   * 也不再拆掉已有 span，颜色 / 高光 / 粗体等样式因此不会被破坏。
+   */
+  const applyFontSize = (value: number) => {
     const target = resolveEditor();
     const selection = window.getSelection();
     if (!target || !selection) return;
-    const { editor, range: savedRange } = target;
-    const targetSize = FONT_SIZE_LEVELS[Math.max(0, Math.min(FONT_SIZE_LEVELS.length - 1, level))];
+    const { editor, range } = target;
+    const size = Math.round(Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, value)));
 
-    // 只处理「被选区完整或部分覆盖」的文本节点；部分覆盖时先按选区边界切分，
-    // 确保选区外的文字不会被连带改变字号。
-    const collect = (): { node: Text; size: number }[] => {
-      const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
-      const result: { node: Text; size: number }[] = [];
-      let textNode = walker.nextNode();
-      while (textNode) {
-        const current = textNode as Text;
-        if (savedRange.intersectsNode(current) && (current.textContent ?? '').trim().length > 0) {
-          result.push({ node: current, size: targetSize });
-        }
-        textNode = walker.nextNode();
-      }
-      return result;
-    };
+    // 选区在「纯文本」中的起止位置：用它精确判断每个节点是否真的落在选区内，
+    // 避免紧贴选区边界的文字被误判成选区内容。
+    const offsets = saveOffsets(editor, range);
 
-    // 先切分被选区部分覆盖的文本节点
-    const splitEdges = () => {
-      editor.querySelectorAll<HTMLElement>('*').forEach(() => undefined);
-      const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
-      const targets: Text[] = [];
-      let node = walker.nextNode();
-      while (node) {
-        const text = node as Text;
-        if (savedRange.intersectsNode(text) && (text.textContent ?? '').length > 0) targets.push(text);
-        node = walker.nextNode();
-      }
-      targets.forEach((text) => {
-        const content = text.textContent ?? '';
-        // 找到该文本节点相对选区的起止字符位置
-        let startInNode = 0;
-        let endInNode = content.length;
-        if (savedRange.startContainer === text) startInNode = savedRange.startOffset;
-        else if (savedRange.startContainer !== text) {
-          const pre = window.document.createRange();
-          pre.selectNodeContents(editor);
-          pre.setEnd(text, 0);
-          startInNode = savedRange.compareBoundaryPoints(Range.START_TO_START, pre) > 0 ? 0 : 0;
-        }
-        if (savedRange.endContainer === text) endInNode = savedRange.endOffset;
-        if (startInNode <= 0 && endInNode >= content.length) return;
-        // 只保留选区内的部分为可改动片段：切出 前/中/后 三段
-        const parent = text.parentNode;
-        if (!parent) return;
-        if (endInNode < content.length) {
-          text.splitText(endInNode);
-        }
-        if (startInNode > 0) {
-          text.splitText(startInNode);
-        }
-      });
-    };
-    splitEdges();
+    // 1. 先在选区边界处切开文本节点，选区外的部分从此是独立节点
+    splitTextAtRange(range);
 
-    const plans = collect();
-    const anyChanged = plans.some(({ node }) => {
-      const px = Number.parseFloat(window.getComputedStyle(node.parentElement ?? editor).fontSize) || 0;
-      return Math.abs(targetSize - px) > 0.05;
+    // 统计所有文本节点的字符区间（与选区用同一套偏移量，判定绝对一致）
+    const all: { node: Text; start: number; end: number }[] = [];
+    let cursor = 0;
+    const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = node as Text;
+      all.push({ node: text, start: cursor, end: cursor + text.length });
+      cursor += text.length;
+    }
+    const isInside = (item: { node: Text; start: number; end: number }) => item.end > item.start
+      && item.start >= offsets.start && item.end <= offsets.end;
+    const inside = new Set<Text>(all.filter(isInside).map((item) => item.node));
+
+    // 2. 整块都在选区内的字号 span：直接改字号，不新增嵌套也不会丢其它样式
+    const restyle: HTMLElement[] = [];
+    const covered = new Set<Text>();
+    editor.querySelectorAll<HTMLElement>('span[style*="font-size"]').forEach((span) => {
+      const texts: Text[] = [];
+      const inner = window.document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+      for (let node = inner.nextNode(); node; node = inner.nextNode()) texts.push(node as Text);
+      const filled = texts.filter((text) => text.length > 0);
+      if (!filled.length || !filled.every((text) => inside.has(text))) return;
+      restyle.push(span);
+      filled.forEach((text) => covered.add(text));
     });
-    if (!plans.length || !anyChanged) return;
 
-    pushUndo();
-    const offsets = saveOffsets(editor, savedRange);
-    unwrapSizeSpans(editor, savedRange);
-    plans.forEach(({ node, size }) => {
-      const parent = node.parentNode;
+    // 3. 其余「完整落在选区内」的文本节点：各自包一层 span，作用范围精确到该节点
+    const wrap: Text[] = [];
+    all.forEach((item) => {
+      if (!isInside(item) || covered.has(item.node)) return;
+      const inherited = Number.parseFloat(window.getComputedStyle(item.node.parentElement ?? editor).fontSize);
+      if (Number.isFinite(inherited) && Math.abs(inherited - size) < 0.1) return;
+      wrap.push(item.node);
+    });
+
+    const restyleNeeded = restyle.some((span) => span.style.fontSize !== `${size}px`);
+    if (!wrap.length && !restyleNeeded) {
+      setSelectedFormat((current) => ({ ...current, sizePx: size, sizeUniform: true }));
+      return;
+    }
+
+    // 一次拖动只记一条撤销，避免刷出一堆中间态
+    if (!sizeUndoPushedRef.current) {
+      pushUndo();
+      sizeUndoPushedRef.current = true;
+    }
+    restyle.forEach((span) => { span.style.fontSize = `${size}px`; });
+    wrap.forEach((text) => {
+      const parent = text.parentNode;
       if (!parent) return;
       const span = window.document.createElement('span');
       span.style.fontSize = `${size}px`;
-      parent.insertBefore(span, node);
-      span.appendChild(node);
+      parent.insertBefore(span, text);
+      span.appendChild(text);
     });
     const restored = restoreOffsets(editor, offsets.start, offsets.end);
     selection.removeAllRanges();
     selection.addRange(restored);
     selectionRef.current = restored.cloneRange();
+    setSelectedFormat((current) => ({ ...current, sizePx: size, sizeUniform: true }));
 
     queueContentUpdate(Number(editor.dataset.cellIndex), editor, true, true);
-    readSelectionFormatRef.current();
     if (!pinnedRef.current) scheduleCaretFade();
   };
 
@@ -1108,25 +1116,26 @@ function App() {
             </select>
           </label>
           <div
-            className="font-size-controls"
-            title={selectedFormat.sizeUniform && selectedFormat.fontStep >= 0
-              ? `字号：${FONT_SIZE_LEVELS[selectedFormat.fontStep]}px`
-              : '选中文字字号不一致'}
+            className={`font-size-controls ${selectedFormat.sizeUniform ? '' : 'mixed'}`}
+            title={selectedFormat.sizeUniform
+              ? `字号：${selectedFormat.sizePx}px`
+              : '选中文字字号不一致，拖动滑条即可统一'}
           >
             <span className="floating-caption">字号</span>
-            <div className="font-size-steps" role="group" aria-label="字号五档">
-              {FONT_SIZE_LEVELS.map((value, index) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={`font-size-step ${selectedFormat.sizeUniform && selectedFormat.fontStep === index ? 'active' : ''}`}
-                  aria-label={`字号 ${value}px`}
-                  title={`${value}px`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => applyFontSizeLevel(index)}
-                />
-              ))}
+            <div className="font-size-slider">
+              <span className="slider-wedge" aria-hidden="true" />
+              <input
+                type="range"
+                min={FONT_SIZE_MIN}
+                max={FONT_SIZE_MAX}
+                step={1}
+                value={Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, selectedFormat.sizePx))}
+                aria-label="选中文字字号"
+                onPointerDown={() => { sizeUndoPushedRef.current = false; }}
+                onInput={(event) => applyFontSize(Number(event.currentTarget.value))}
+              />
             </div>
+            <span className="font-size-value">{selectedFormat.sizePx}</span>
           </div>
         </div>
         <div className="selection-toolbar-row style-controls-row">
