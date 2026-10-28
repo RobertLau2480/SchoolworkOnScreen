@@ -10,9 +10,9 @@
 ![Windows](https://img.shields.io/badge/Windows-10%201703%2B-0078D6?logo=windows&logoColor=white)
 ![License](https://img.shields.io/badge/License-GPLv3-blue)
 
-
+效果图：
 <img width="1280" height="720" alt="Image" src="https://github.com/user-attachments/assets/19db96ce-fed2-4f13-8103-2dc002caf96a" />
----
+
 
 ## 📖 项目简介
 
