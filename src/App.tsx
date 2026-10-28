@@ -669,21 +669,26 @@ function App() {
         break;
       }
     }
-    // 收集选区内所有文字的实际字号，判断是否统一（不统一时不点亮任何档位）
+    // 收集选区内所有文字的实际字号，判断是否统一（不统一时不点亮档位）。
+    // 这里必须用字符偏移量精确判定「真正与选区重叠」的文本节点：
+    // intersectsNode 会把紧贴选区边界的相邻节点也算进来，导致滑条读到的字号混入未选中的文字。
     const sizeSet = new Set<number>();
-    {
+    if (editor.contains(range.startContainer) && editor.contains(range.endContainer)) {
+      const { start: selStart, end: selEnd } = saveOffsets(editor, range);
       const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
-      let textNode = walker.nextNode();
-      while (textNode) {
+      let cursor = 0;
+      for (let textNode = walker.nextNode(); textNode; textNode = walker.nextNode()) {
         const text = textNode as Text;
-        if (range.intersectsNode(text) && (text.textContent ?? '').trim().length > 0) {
-          const parent = text.parentElement ?? editor;
-          // 记录过作者字号的片段显示其作者字号，其余（继承了单元格基准字号）显示实际渲染字号
-          const authored = Number.parseFloat(parent.dataset.swosFs ?? '');
-          const px = Number.isFinite(authored) ? authored : Number.parseFloat(window.getComputedStyle(parent).fontSize);
-          if (Number.isFinite(px)) sizeSet.add(Math.round(px * 10) / 10);
-        }
-        textNode = walker.nextNode();
+        const start = cursor;
+        const end = cursor + text.length;
+        cursor = end;
+        if (end <= start || end <= selStart || start >= selEnd) continue;
+        if ((text.textContent ?? '').trim().length === 0) continue;
+        const parent = text.parentElement ?? editor;
+        // 记录过作者字号的片段显示其作者字号，其余（继承了单元格基准字号）显示实际渲染字号
+        const authored = Number.parseFloat(parent.dataset.swosFs ?? '');
+        const px = Number.isFinite(authored) ? authored : Number.parseFloat(window.getComputedStyle(parent).fontSize);
+        if (Number.isFinite(px)) sizeSet.add(Math.round(px * 10) / 10);
       }
     }
     const sizeUniform = sizeSet.size <= 1;
