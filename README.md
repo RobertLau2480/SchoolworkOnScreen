@@ -62,28 +62,14 @@ npm run dev:desktop
 
 ### 打包发布
 
-提供两种 Windows 产物，功能完全一致，只是分发形式不同：
-
 ```powershell
-# ① 完整版：生成可直接运行的目录（含 Electron 运行时 DLL）
+# 生成 Windows 完整运行目录（含 Electron 运行时 DLL）
 npm run package:full
-
-# ② 轻简版：打包成单个自解压 EXE，便于分发
-npm run package:slim
-
-# 一次生成两者
-npm run package:all
 ```
 
-| 版本 | 命令 | 产物位置 | 说明 |
-|---|---|---|---|
-| 完整版（带依赖） | `npm run package:full` | `release\windows\win-unpacked\` | 整目录即为完整程序，必须**整体复制或压缩**，不要单独移动 `SchoolworkOnScreen.exe`（`ffmpeg.dll` 等运行时依赖必须在同一目录） |
-| 轻简版 | `npm run package:slim` | `release\windows\屏上作业-<版本>-portable.exe` | 单个 EXE，双击即用；首次启动会自解压到临时目录，启动稍慢 |
+产物位于 `release\windows\win-unpacked\`。请**整体复制或压缩**该文件夹，不要单独移动 `SchoolworkOnScreen.exe`（`ffmpeg.dll` 等运行时依赖必须与 EXE 保持在同一目录）。
 
-两个版本都会把 `fonts\`、`config.ini`、`content.json` 一起打进去：
-
-- **完整版**直接使用同目录下的 `fonts\`，用户可自由增删字体；
-- **轻简版**运行时读取自身解压目录内的 `fonts\`，若 EXE 旁存在 `fonts\` 则优先使用该目录。
+`fonts\`、`config.ini`、`content.json` 会一起打进去：程序直接使用 EXE 同目录下的 `fonts\`，自定义字体只需往该目录增删文件后重启。
 
 > ⚠️ **注意**：作业数据 `config.ini` / `content.json`（以及 `history\` 目录）写在 EXE 所在目录，因此该目录需要写入权限。建议放在可写的普通文件夹，**不要**放在 `Program Files`。
 

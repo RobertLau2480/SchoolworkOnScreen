@@ -12,8 +12,6 @@
     "build": "tsc --noEmit && vite build && tsc -p tsconfig.electron.json",
     "package:full": "npm run build && electron-builder --dir",
     "package:windows": "npm run package:full",
-    "package:slim": "npm run build && electron-builder --win portable",
-    "package:all": "npm run build && electron-builder --dir && electron-builder --win portable",
     "preview": "vite preview"
   },
   "devDependencies": {
@@ -35,7 +33,6 @@
     "appId": "com.schoolworkonscreen.app",
     "productName": "屏上作业",
     "asar": true,
-    "compression": "maximum",
     "directories": {
       "output": "release/windows"
     },
@@ -70,12 +67,8 @@
       }
     ],
     "win": {
-      "target": [
-        "portable"
-      ],
       "icon": "icon-256.png",
-      "executableName": "SchoolworkOnScreen",
-      "artifactName": "${productName}-${version}-portable.${ext}"
+      "executableName": "SchoolworkOnScreen"
     }
   }
 }

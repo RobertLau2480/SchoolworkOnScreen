@@ -141,6 +141,8 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // 关闭拼写检查：避免中文作业内容被画红波浪线
+      spellcheck: false,
     },
   });
 

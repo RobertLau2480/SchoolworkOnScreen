@@ -711,6 +711,21 @@ button { color: inherit; }
 [data-theme='light'] .selection-toolbar {
   background-color: rgba(255, 255, 255, .85);
 }
+/* 拖动字号滑条时：整框透明并锁定位置，只保留滑条本身，方便看清文字变化 */
+.selection-toolbar.dragging-size {
+  background-color: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.selection-toolbar.dragging-size .font-size-controls {
+  background: transparent;
+  border-color: transparent;
+}
+.selection-toolbar.dragging-size .text-controls-row > *:not(.font-size-controls),
+.selection-toolbar.dragging-size .style-controls-row,
+.selection-toolbar.dragging-size .font-size-controls > *:not(.font-size-slider) {
+  opacity: 0;
+}
 /* 选中文字高亮：半透明蓝，不用纯蓝 */
 ::selection {
   background: rgba(90, 160, 255, .35);

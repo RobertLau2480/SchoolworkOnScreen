@@ -353,6 +353,8 @@ function App() {
     sizePx: FONT_SIZE_DEFAULT, sizeUniform: true,
   });
   const [toolbarVisible, setToolbarVisible] = useState(false);
+  /** 正在拖动字号滑条：锁定样式框位置并让整框透明，只保留滑条 */
+  const [sizeDragging, setSizeDragging] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ left: 0, top: 0, side: 'below' as 'above' | 'below' });
   const [aboutOpen, setAboutOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -370,6 +372,8 @@ function App() {
   const selectionRef = useRef<Range | null>(null);
   /** 一次滑条拖动只记录一条撤销 */
   const sizeUndoPushedRef = useRef(false);
+  /** 与 sizeDragging 同步，供事件回调与 layout effect 读取 */
+  const sizeDraggingRef = useRef(false);
   const fitFramesRef = useRef(new WeakMap<HTMLElement, number>());
   const inputTimersRef = useRef(new Map<number, number>());
   const resizeRef = useRef<{ axis: 'columns' | 'rows'; index: number; start: number; values: number[] } | null>(null);
@@ -382,6 +386,7 @@ function App() {
   documentRef.current = document;
   fontsRef.current = fonts;
   themeRef.current = settings.theme;
+  sizeDraggingRef.current = sizeDragging;
 
   const fontLabel = (family: string) => {
     const option = fonts.find((item) => item.family === family);
@@ -626,7 +631,10 @@ function App() {
     const rect = { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom };
     selectionRectRef.current = rect;
     setToolbarVisible(true);
-    setToolbarPosition({ left: rect.left + (rect.right - rect.left) / 2, top: rect.bottom + 10, side: 'below' });
+    // 拖动字号滑条期间锁定样式框位置，避免它跟着文字布局跳动
+    if (!sizeDraggingRef.current) {
+      setToolbarPosition({ left: rect.left + (rect.right - rect.left) / 2, top: rect.bottom + 10, side: 'below' });
+    }
 
     const computed = window.getComputedStyle(anchor ?? editor);
     const pixelSize = Number.parseFloat(computed.fontSize);
@@ -718,10 +726,32 @@ function App() {
     };
   }, []);
 
+  /**
+   * 拖动字号滑条结束：恢复整框显示，并按最终排版刷新一次样式框位置。
+   * 用 window 上的 pointerup 兜底，指针在窗口外松开也能恢复。
+   */
+  useEffect(() => {
+    const end = () => {
+      if (!sizeDraggingRef.current) return;
+      sizeDraggingRef.current = false;
+      setSizeDragging(false);
+      window.requestAnimationFrame(() => readSelectionFormatRef.current());
+    };
+    window.addEventListener('pointerup', end, true);
+    window.addEventListener('pointercancel', end, true);
+    window.addEventListener('blur', end);
+    return () => {
+      window.removeEventListener('pointerup', end, true);
+      window.removeEventListener('pointercancel', end, true);
+      window.removeEventListener('blur', end);
+    };
+  }, []);
+
   useLayoutEffect(() => {
     const toolbar = formatToolbarRef.current;
     const selectionBounds = selectionRectRef.current;
     if (!toolbar || !toolbarVisible || !selectionBounds) return;
+    if (sizeDraggingRef.current) return; // 拖动字号期间不自动挪动位置
     const bounds = toolbar.getBoundingClientRect();
     const anchorCenter = (selectionBounds.left + selectionBounds.right) / 2;
     const left = Math.min(window.innerWidth - bounds.width - 8, Math.max(8, anchorCenter - bounds.width / 2));
@@ -1034,7 +1064,7 @@ function App() {
             return (
               <article key={`${document.layout}-${index}`} className="homework-cell" style={{ backgroundColor: settings.frame }}>
                 <div className="cell-heading">
-                  <input aria-label={`第${index + 1}格科目`} value={cell.subject} onChange={(event) => {
+                  <input aria-label={`第${index + 1}格科目`} spellCheck={false} autoComplete="off" value={cell.subject} onChange={(event) => {
                     pushUndo();
                     updateCell(index, { subject: event.target.value });
                     markCellModified(index);
@@ -1048,6 +1078,7 @@ function App() {
                 <div
                   className="cell-editor"
                   contentEditable
+                  spellCheck={false}
                   suppressContentEditableWarning
                   role="textbox"
                   data-cell-index={index}
@@ -1090,7 +1121,7 @@ function App() {
 
       {toolbarVisible && <div
         ref={formatToolbarRef}
-        className={`selection-toolbar ${toolbarPosition.side}`}
+        className={`selection-toolbar ${toolbarPosition.side} ${sizeDragging ? 'dragging-size' : ''}`}
         style={{ left: toolbarPosition.left, top: toolbarPosition.top }}
         role="toolbar"
         aria-label="文字格式"
@@ -1119,7 +1150,11 @@ function App() {
                 step={1}
                 value={Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, selectedFormat.sizePx))}
                 aria-label="选中文字字号"
-                onPointerDown={() => { sizeUndoPushedRef.current = false; }}
+                onPointerDown={() => {
+                  sizeUndoPushedRef.current = false;
+                  sizeDraggingRef.current = true;
+                  setSizeDragging(true);
+                }}
                 onInput={(event) => applyFontSize(Number(event.currentTarget.value))}
               />
             </div>
