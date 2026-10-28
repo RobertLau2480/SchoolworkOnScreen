@@ -790,6 +790,8 @@ button { color: inherit; }
   align-items: center;
   width: 96px;
   height: 22px;
+  /* 触摸拖动滑条时不要把手指移动判成页面滚动，否则浏览器会发 pointercancel 打断拖动 */
+  touch-action: none;
 }
 .slider-wedge {
   position: absolute;
@@ -810,6 +812,7 @@ button { color: inherit; }
   background: transparent;
   -webkit-appearance: none;
   appearance: none;
+  touch-action: none;
   cursor: pointer;
 }
 .font-size-slider input[type='range']::-webkit-slider-runnable-track {

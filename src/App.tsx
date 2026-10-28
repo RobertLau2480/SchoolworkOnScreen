@@ -411,6 +411,7 @@ function App() {
     setDocument(previous);
     setCanUndo(undoStackRef.current.length > 0);
     setCanRedo(true);
+    syncEditorsFromDocument(previous);
   };
 
   const redo = () => {
@@ -420,6 +421,7 @@ function App() {
     setDocument(next);
     setCanUndo(true);
     setCanRedo(redoStackRef.current.length > 0);
+    syncEditorsFromDocument(next);
   };
 
   useEffect(() => {
@@ -525,6 +527,23 @@ function App() {
     if (pending) window.cancelAnimationFrame(pending);
     const baseSize = getBaseFontSize();
     fitFramesRef.current.set(editor, window.requestAnimationFrame(() => fitEditor(editor, baseSize)));
+  };
+
+  /**
+   * 撤销 / 重做后把文档直接写回编辑区。
+   * 编辑区在「选区仍落在其中」时不会被 ref 回写（否则会销毁选区），
+   * 因此这里显式同步一次，保证撤销立即可见。
+   */
+  const syncEditorsFromDocument = (doc: HomeworkDocument) => {
+    gridRef.current?.querySelectorAll<HTMLElement>('.cell-editor').forEach((editor) => {
+      const index = Number(editor.dataset.cellIndex);
+      const text = doc.cells[index]?.text ?? '';
+      if (editor.innerHTML !== text) editor.innerHTML = text;
+      scheduleFit(editor);
+    });
+    // 内容已变，旧选区不再有效，顺手清掉避免后续操作作用在旧范围上
+    window.getSelection()?.removeAllRanges();
+    hideToolbar();
   };
 
   useEffect(() => {
@@ -728,21 +747,27 @@ function App() {
 
   /**
    * 拖动字号滑条结束：恢复整框显示，并按最终排版刷新一次样式框位置。
-   * 用 window 上的 pointerup 兜底，指针在窗口外松开也能恢复。
+   * 触摸拖动时浏览器会把手势判成滚动并误发 pointercancel，此时拖动其实还在继续，
+   * 因此 pointercancel 只在鼠标/触控笔下才算结束，触摸改由 touchend 兜底。
    */
   useEffect(() => {
-    const end = () => {
+    const end = (event: Event) => {
       if (!sizeDraggingRef.current) return;
+      if (event.type === 'pointercancel' && (event as PointerEvent).pointerType === 'touch') return;
       sizeDraggingRef.current = false;
       setSizeDragging(false);
       window.requestAnimationFrame(() => readSelectionFormatRef.current());
     };
     window.addEventListener('pointerup', end, true);
     window.addEventListener('pointercancel', end, true);
+    window.addEventListener('touchend', end, true);
+    window.addEventListener('touchcancel', end, true);
     window.addEventListener('blur', end);
     return () => {
       window.removeEventListener('pointerup', end, true);
       window.removeEventListener('pointercancel', end, true);
+      window.removeEventListener('touchend', end, true);
+      window.removeEventListener('touchcancel', end, true);
       window.removeEventListener('blur', end);
     };
   }, []);
